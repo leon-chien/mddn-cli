@@ -11,7 +11,9 @@ from mddatanet.format.metadata import read_metadata
 from mddatanet.format.provenance import read_provenance
 from mddatanet.io.checksums import verify_checksums
 from mddatanet.io.package import open_package
-from mddatanet.io.zarr_store import REQUIRED_ROOT_GROUPS, open_zarr_group, require_root_groups
+from mddatanet.io.zarr_store import open_zarr_group, require_root_groups
+from mddatanet.labels.future import future_event_labels
+from mddatanet.labels.metrics import compute_label_metrics, read_metrics_file
 
 
 @dataclass
@@ -102,6 +104,10 @@ def inspect_package(
             if include_labels and "labels" in zarr_root:
                 summary["label_arrays"] = _label_listing(zarr_root["labels"])
                 summary["label_positive_rates"] = _label_positive_rates(zarr_root["labels"])
+                summary["baseline_metrics"] = read_metrics_file(root) or {
+                    "metric_type": "descriptive_dataset_metrics",
+                    "events": compute_label_metrics(zarr_root),
+                }
             if include_splits and "splits" in zarr_root:
                 summary["split_arrays"] = _array_listing(zarr_root["splits"])
         return summary
@@ -136,6 +142,16 @@ def format_inspection(summary: dict[str, Any]) -> str:
     lines.append("Events:")
     event_names = labels.get("event_names") or []
     lines.extend([f"  {name}" for name in event_names] or ["  none"])
+    baseline_metrics = summary.get("baseline_metrics", {}).get("events", {})
+    if baseline_metrics:
+        lines.append("Label Metrics:")
+        for event_name, values in baseline_metrics.items():
+            lines.append(
+                f"  {event_name}: now+ {values.get('event_now_positive_rate', 0.0):.3f}, "
+                f"future+ {values.get('valid_future_positive_rate', 0.0):.3f} "
+                f"({values.get('valid_future_frame_count', 0)} valid frames), "
+                f"{values.get('transition_count', 0)} transitions"
+            )
     if summary.get("splits"):
         lines.extend(["Splits:", f"  {summary['splits']}"])
     lines.extend(["Validation:", "  passed" if summary["validation_ok"] else "  failed"])
@@ -228,6 +244,7 @@ def _validate_array_shapes(zarr_root: Any, num_frames: int, result: ValidationRe
             result.add_error(f"labels/{event_name} missing event_future label")
         for label_name in _group_keys(event_group):
             _check_first_dim(event_group[label_name], num_frames, f"labels/{event_name}/{label_name}", result)
+        _validate_future_labels(zarr_root, event_name, result)
     if "index" in zarr_root:
         _validate_index(zarr_root, result)
 
@@ -333,6 +350,77 @@ def _validate_checksums(root: Path, result: ValidationResult) -> None:
             result.add_error(problem)
 
 
+def _validate_future_labels(zarr_root: Any, event_name: str, result: ValidationResult) -> None:
+    event_group = zarr_root["labels"][event_name]
+    if "event_now" not in event_group:
+        return
+    future_names = [
+        name
+        for name in _group_keys(event_group)
+        if name.startswith("event_future_") and not name.endswith("_valid_mask")
+    ]
+    arrays = zarr_root["arrays"] if "arrays" in zarr_root else {}
+    run_ids = arrays["run_ids"] if "run_ids" in arrays else None
+    for future_name in future_names:
+        try:
+            horizon = int(future_name.rsplit("_", 1)[-1])
+        except ValueError:
+            result.add_error(f"labels/{event_name}/{future_name} has invalid horizon suffix")
+            continue
+        mask_name = f"{future_name}_valid_mask"
+        if mask_name not in event_group:
+            result.add_error(
+                f"labels/{event_name}/{mask_name} missing",
+                suggestion="Re-run `mddatanet label` to generate fixed-horizon validity masks.",
+            )
+            continue
+        _check_first_dim(event_group[mask_name], event_group["event_now"].shape[0], f"labels/{event_name}/{mask_name}", result)
+        if not _future_label_matches(
+            event_group["event_now"],
+            event_group[future_name],
+            event_group[mask_name],
+            horizon,
+            run_ids=run_ids,
+        ):
+            result.add_error(
+                f"labels/{event_name}/{future_name} does not match fixed-horizon semantics",
+                suggestion="Re-run `mddatanet label` to regenerate future labels and valid masks.",
+            )
+        else:
+            result.add_check(f"labels/{event_name}/{future_name} horizon semantics valid")
+
+
+def _future_label_matches(
+    event_now: Any,
+    future: Any,
+    valid_mask: Any,
+    horizon: int,
+    *,
+    run_ids: Any | None,
+    chunk_size: int = 65_536,
+) -> bool:
+    n_frames = int(event_now.shape[0])
+    for start, stop in _run_ranges(n_frames, run_ids):
+        for chunk_start in range(start, stop, chunk_size):
+            chunk_stop = min(chunk_start + chunk_size, stop)
+            overlap_stop = min(chunk_stop + horizon, stop)
+            now_chunk = list(event_now[chunk_start:overlap_stop])
+            expected_future = future_event_labels(now_chunk, horizon)[: chunk_stop - chunk_start]
+            expected_mask = [
+                (frame_index + horizon) < stop
+                for frame_index in range(chunk_start, chunk_stop)
+            ]
+            expected_future = [
+                bool(value) and bool(mask)
+                for value, mask in zip(expected_future, expected_mask, strict=True)
+            ]
+            actual_future = [bool(value) for value in future[chunk_start:chunk_stop]]
+            actual_mask = [bool(value) for value in valid_mask[chunk_start:chunk_stop]]
+            if actual_future != expected_future or actual_mask != expected_mask:
+                return False
+    return True
+
+
 def _check_first_dim(array: Any, expected: int, label: str, result: ValidationResult) -> None:
     shape = getattr(array, "shape", None)
     if not shape:
@@ -373,6 +461,24 @@ def _label_positive_rates(group: Any) -> dict[str, dict[str, float]]:
             event_rates[array_name] = float(positives / total) if total else 0.0
         rates[event_name] = event_rates
     return rates
+
+
+def _run_ranges(n_frames: int, run_ids: Any | None = None) -> list[tuple[int, int]]:
+    if n_frames <= 0:
+        return []
+    if run_ids is None:
+        return [(0, n_frames)]
+    ranges: list[tuple[int, int]] = []
+    start = 0
+    current = str(run_ids[0])
+    for index in range(1, n_frames):
+        value = str(run_ids[index])
+        if value != current:
+            ranges.append((start, index))
+            start = index
+            current = value
+    ranges.append((start, n_frames))
+    return ranges
 
 
 def _validate_index(zarr_root: Any, result: ValidationResult) -> None:

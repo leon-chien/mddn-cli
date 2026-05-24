@@ -1,5 +1,5 @@
-import pytest
 from pathlib import Path
+
 import numpy as np
 import MDAnalysis as mda
 from mddatanet.convert import convert_package
@@ -29,7 +29,7 @@ def create_tiny_gro_xtc(prefix: Path):
     
     # Write XTC
     with mda.Writer(str(xtc_path), n_atoms) as W:
-        for i in range(n_frames):
+        for _i in range(n_frames):
             u.atoms.positions += np.random.random((n_atoms, 3)).astype(np.float32)
             W.write(u)
             
@@ -87,7 +87,7 @@ def create_tiny_pdb_dcd(prefix: Path):
     u.atoms.write(str(pdb_path))
     
     with mda.Writer(str(dcd_path), n_atoms) as W:
-        for i in range(n_frames):
+        for _i in range(n_frames):
             u.atoms.positions += np.random.random((n_atoms, 3)).astype(np.float32)
             W.write(u)
             

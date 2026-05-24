@@ -1,6 +1,3 @@
-import pytest
-from pathlib import Path
-import numpy as np
 from mddatanet.convert import convert_package
 from mddatanet.features.compute import featurize_package
 from mddatanet.labels.service import label_package
@@ -70,3 +67,6 @@ END
     assert len(windows) == 3 # 4 frames, window 2 -> [0,1], [1,2], [2,3]
     assert windows[0]["features"].shape == (2, 1)
     assert "label" in windows[0]
+
+    future_windows = list(iter_windows(label_out, window_size=1, label_name="my_event/event_future_1"))
+    assert len(future_windows) == 3

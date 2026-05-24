@@ -106,7 +106,7 @@ def run_ligand_unbinding_demo(
                 "Demo package failed validation.",
                 suggestion="Run `mddatanet validate outputs/ligand_unbinding_demo.mddatanet.zip` for details.",
             )
-        console.print(f"Validation: passed")
+        console.print("Validation: passed")
         console.print(f"ligand_unbinding event_now positives: {positive_rate:.1%}")
         print_success(str(final_zip))
         console.print(f"Try: mddatanet inspect {final_zip}")
@@ -156,4 +156,3 @@ def _atom_line(
         f"{record:<6}{serial:5d} {name:^4s} {resname:>3s} {chain:1s}{resid:4d}"
         f"    {x:8.3f}{y:8.3f}{z:8.3f}  1.00  0.00          {element:>2s}"
     )
-

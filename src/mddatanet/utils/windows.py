@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from pathlib import Path
-from typing import Any, Generator
 
 import numpy as np
-import zarr
 
 from mddatanet.io.zarr_store import open_zarr_group
 
@@ -36,10 +35,16 @@ def iter_windows(
     num_frames = features[0].shape[0]
     
     labels = []
+    label_mask = None
     if include_labels and label_name:
         # label_name could be "my_event/event_future_500"
         label_arr = zarr_root[f"labels/{label_name}"]
         labels.append(label_arr)
+        mask_path = f"labels/{label_name}_valid_mask"
+        try:
+            label_mask = zarr_root[mask_path]
+        except KeyError:
+            label_mask = None
 
     # We also need to respect run boundaries.
     # We should not create windows that cross runs.
@@ -58,6 +63,9 @@ def iter_windows(
             # or the future label relative to the end of the window.
             # event_future_H at frame i means "event occurs in [i, i+H]".
             # If our window is [i, i+window_size-1], we might want the label at i+window_size-1.
-            result["label"] = labels[0][i + window_size - 1]
+            label_index = i + window_size - 1
+            if label_mask is not None and not bool(label_mask[label_index]):
+                continue
+            result["label"] = labels[0][label_index]
             
         yield result

@@ -39,11 +39,12 @@ events:
         encoding="utf-8",
     )
 
-    assert runner.invoke(app, ["convert", "--topology", str(pdb), "--name", "tiny", "--out", str(raw)]).exit_code == 0
+    convert_result = runner.invoke(app, ["convert", "--topology", str(pdb), "--name", "tiny", "--out", str(raw)])
+    assert convert_result.exit_code == 0
+    assert "What's next?" in convert_result.output
     assert runner.invoke(app, ["featurize", "--input", str(raw), "--features", str(features), "--out", str(features_pkg)]).exit_code == 0
     assert runner.invoke(app, ["label", "--input", str(features_pkg), "--events", str(events), "--out", str(labeled)]).exit_code == 0
     assert runner.invoke(app, ["split", "--input", str(labeled), "--out", str(ready)]).exit_code == 0
     assert runner.invoke(app, ["validate", str(ready)]).exit_code == 0
     assert runner.invoke(app, ["inspect", str(ready), "--labels"]).exit_code == 0
     assert validate_package(ready).ok
-

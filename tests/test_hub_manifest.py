@@ -17,7 +17,15 @@ def test_export_manifest_for_valid_zip(tmp_path):
     raw = tmp_path / "raw.mddatanet"
     labeled_zip = tmp_path / "labeled.mddatanet.zip"
     out = tmp_path / "hub_dataset"
-    convert_package(topology=pdb, trajectory=None, coordinates=None, name="tiny", out=raw, overwrite=True)
+    convert_package(
+        topology=pdb,
+        trajectory=None,
+        coordinates=None,
+        name="tiny",
+        out=raw,
+        citation="doi:10.0000/example",
+        overwrite=True,
+    )
     label_package(
         input_path=raw,
         out=labeled_zip,
@@ -35,10 +43,15 @@ def test_export_manifest_for_valid_zip(tmp_path):
     assert (out / "dataset_card.md").exists()
     assert (out / "checksums.json").exists()
     assert manifest["dataset_id"] == "tiny_ligand"
+    assert manifest["schema_version"] == "1.0"
     assert manifest["package"]["sha256"] == sha256_file(labeled_zip)
     assert manifest["package"]["size_bytes"] == labeled_zip.stat().st_size
     assert manifest["tags"]["task"]["event_family"] == "ligand_unbinding"
+    assert manifest["baseline_metrics"]["events"]["ligand_unbinding"]["valid_future_frame_count"] == 1
     assert "TO_BE_PROVIDED" in download
+    assert "schema_version: '1.0'" in download
+    assert (out / "citation.bib").exists()
+    assert (out / "baseline_metrics.json").exists()
 
 
 def test_cli_export_manifest(tmp_path):

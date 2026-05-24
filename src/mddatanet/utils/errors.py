@@ -49,6 +49,5 @@ class DependencyError(MDDataNetError):
     def __init__(self, dependency: str, *, purpose: str) -> None:
         super().__init__(
             f"Missing dependency '{dependency}' required for {purpose}.",
-            suggestion=f"Install project dependencies with: python -m pip install -e '.[dev]'",
+            suggestion="Install project dependencies with: python -m pip install -e '.[dev]'",
         )
-

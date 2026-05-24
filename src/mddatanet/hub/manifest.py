@@ -6,6 +6,9 @@ import json
 import shutil
 from pathlib import Path
 from typing import Any
+from urllib.request import Request, urlopen
+
+from pydantic import BaseModel, Field
 
 from mddatanet import __version__
 from mddatanet.format.metadata import read_metadata
@@ -19,6 +22,31 @@ from mddatanet.utils.yaml import read_yaml, write_yaml
 
 PLACEHOLDER_DOWNLOAD_URL = "TO_BE_PROVIDED"
 DOWNLOAD_NOTES = "Upload package to Hugging Face, Zenodo, S3/R2, GCS, or institutional storage."
+MANIFEST_SCHEMA_VERSION = "1.0"
+DOWNLOAD_SCHEMA_VERSION = "1.0"
+
+
+class HubDownload(BaseModel):
+    schema_version: str = DOWNLOAD_SCHEMA_VERSION
+    url: str
+    sha256: str
+    size_bytes: int = Field(ge=0)
+    storage_provider: str = "external"
+    verified: bool = False
+    notes: str = DOWNLOAD_NOTES
+
+
+class HubManifest(BaseModel):
+    schema_version: str = MANIFEST_SCHEMA_VERSION
+    dataset_id: str
+    package: dict[str, Any]
+    format_version: str
+    mddatanet_version: str
+    tags: dict[str, Any]
+    summary: dict[str, Any]
+    download: HubDownload
+    provenance: dict[str, Any]
+    baseline_metrics: dict[str, Any] | None = None
 
 
 def export_manifest(
@@ -27,6 +55,7 @@ def export_manifest(
     out: Path,
     download_url: str | None = None,
     dataset_id: str | None = None,
+    verify_download: bool = False,
     overwrite: bool = False,
 ) -> Path:
     """Export Hub registry metadata for a validated package."""
@@ -52,13 +81,19 @@ def export_manifest(
         resolved_dataset_id = dataset_id or _dataset_id(metadata.dataset_name)
         package_summary = inspect_package(package_path, include_features=True, include_labels=True, include_splits=True)
         package_info = _package_info(package_path, resolved_dataset_id)
-        manifest = {
-            "dataset_id": resolved_dataset_id,
-            "package": package_info,
-            "format_version": metadata.format_version,
-            "mddatanet_version": metadata.mddatanet_version or __version__,
-            "tags": _structured_tags(root, metadata, package_summary),
-            "summary": {
+        download = HubDownload(
+            url=download_url or PLACEHOLDER_DOWNLOAD_URL,
+            sha256=package_info["sha256"],
+            size_bytes=package_info["size_bytes"],
+            verified=_verify_download(download_url, package_info) if verify_download else False,
+        )
+        manifest = HubManifest(
+            dataset_id=resolved_dataset_id,
+            package=package_info,
+            format_version=metadata.format_version,
+            mddatanet_version=metadata.mddatanet_version or __version__,
+            tags=_structured_tags(root, metadata, package_summary),
+            summary={
                 "dataset_name": metadata.dataset_name,
                 "description": metadata.description,
                 "num_atoms": metadata.system.num_atoms,
@@ -69,31 +104,27 @@ def export_manifest(
                 "events": metadata.labels.event_names,
                 "splits": metadata.splits.model_dump(mode="json") if metadata.splits else None,
             },
-            "download": {
-                "url": download_url or PLACEHOLDER_DOWNLOAD_URL,
-                "sha256": package_info["sha256"],
-                "size_bytes": package_info["size_bytes"],
-                "storage_provider": "external",
-            },
-            "provenance": {
-                "source_files": [source.model_dump(mode="json", exclude_none=True) for source in provenance.source_files],
+            download=download,
+            provenance={
+                "source_files": [
+                    source.model_dump(mode="json", exclude_none=True)
+                    for source in provenance.source_files
+                ],
                 "runs": [run.model_dump(mode="json", exclude_none=True) for run in provenance.runs],
             },
-        }
+            baseline_metrics=_optional_json(root / "baseline_metrics.json") or None,
+        )
         _copy_if_exists(root / "metadata.json", out / "metadata.json")
         _copy_if_exists(root / "dataset_card.md", out / "dataset_card.md")
         _copy_if_exists(root / "checksums.json", out / "checksums.json")
-        (out / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-        write_yaml(
-            {
-                "url": download_url or PLACEHOLDER_DOWNLOAD_URL,
-                "sha256": package_info["sha256"],
-                "size_bytes": package_info["size_bytes"],
-                "storage_provider": "external",
-                "notes": DOWNLOAD_NOTES,
-            },
-            out / "download.yaml",
+        _copy_if_exists(root / "baseline_metrics.json", out / "baseline_metrics.json")
+        _copy_if_exists(root / "label_statistics.json", out / "label_statistics.json")
+        _write_citation(metadata.source.citation, out / "citation.bib")
+        (out / "manifest.json").write_text(
+            json.dumps(manifest.model_dump(mode="json"), indent=2) + "\n",
+            encoding="utf-8",
         )
+        write_yaml(download.model_dump(mode="json"), out / "download.yaml")
     return out
 
 
@@ -165,6 +196,41 @@ def _copy_if_exists(source: Path, destination: Path) -> None:
         shutil.copyfile(source, destination)
 
 
+def _write_citation(citation: str | None, destination: Path) -> None:
+    if not citation:
+        return
+    destination.write_text(
+        "@misc{mddatanet_dataset,\n"
+        f"  note = {{{citation}}}\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+
+def _verify_download(download_url: str | None, package_info: dict[str, Any]) -> bool:
+    if not download_url:
+        raise ValidationError(
+            "--verify-download requires --download-url.",
+            suggestion="Pass a reachable external URL or omit --verify-download.",
+        )
+    request = Request(download_url, method="HEAD", headers={"User-Agent": "mddatanet/0.1"})
+    try:
+        with urlopen(request, timeout=15) as response:
+            length = response.headers.get("Content-Length")
+            if length is not None and int(length) != int(package_info["size_bytes"]):
+                raise ValidationError(
+                    "Download URL size does not match package size.",
+                    suggestion="Check that --download-url points to the exported package file.",
+                )
+    except ValidationError:
+        raise
+    except Exception as exc:
+        raise ValidationError(
+            f"Could not verify download URL: {exc}",
+            suggestion="Check the URL or retry without --verify-download.",
+        ) from exc
+    return True
+
+
 def _dataset_id(name: str) -> str:
     return "".join(char.lower() if char.isalnum() else "_" for char in name).strip("_") or "dataset"
-

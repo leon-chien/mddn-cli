@@ -95,6 +95,7 @@ def convert(
         )
         print_step(4, 4, "Package written.")
         print_success(str(result))
+        _next(f"Run `mddatanet featurize --input {result} --features features.yaml --out features.mddatanet` or use `mddatanet label --preset ...` if the preset can compute missing features.")
     except MDDataNetError as exc:
         _fail(exc.display_message())
 
@@ -121,6 +122,7 @@ def featurize(
         )
         print_step(4, 4, "Features written.")
         print_success(str(result))
+        _next(f"Run `mddatanet label --input {result} --events events.yaml --out labeled.mddatanet`.")
     except MDDataNetError as exc:
         _fail(exc.display_message())
 
@@ -161,6 +163,7 @@ def label(
         )
         print_step(4, 4, "Labels written.")
         print_success(str(result))
+        _next(f"Run `mddatanet split --input {result} --strategy temporal --out ready.mddatanet`.")
     except MDDataNetError as exc:
         _fail(exc.display_message())
 
@@ -194,6 +197,7 @@ def split(
         )
         print_step(4, 4, "Splits written.")
         print_success(str(result))
+        _next(f"Run `mddatanet validate {result}` and then `mddatanet inspect {result} --labels --splits`.")
     except MDDataNetError as exc:
         _fail(exc.display_message())
 
@@ -217,6 +221,7 @@ def validate(
     if not result.ok:
         raise typer.Exit(1)
     console.print("Package is valid.")
+    _next(f"Run `mddatanet inspect {package} --features --labels --splits` or `mddatanet export-manifest {package} --out hub_dataset_dir`.")
 
 
 @app.command()
@@ -236,6 +241,8 @@ def inspect(
         include_splits=splits,
     )
     console.print(format_inspection_json(summary) if json_output else format_inspection(summary))
+    if not json_output:
+        _next("Run `mddatanet validate PACKAGE` before sharing, or `mddatanet export-manifest PACKAGE --out hub_dataset_dir` for Hub registry metadata.")
 
 
 @app.command()
@@ -251,6 +258,7 @@ def pack(
         packed = pack_package(source, output, overwrite=overwrite)
         print_step(2, 2, "Packed output.")
         print_success(str(packed))
+        _next(f"Run `mddatanet validate {packed}`.")
     except MDDataNetError as exc:
         _fail(exc.display_message())
 
@@ -268,6 +276,7 @@ def unpack(
         unpacked = unpack_package(package, out, overwrite=overwrite)
         print_step(2, 2, "Unpacked output.")
         print_success(str(unpacked))
+        _next(f"Run `mddatanet inspect {unpacked}` or continue processing the unpacked directory.")
     except MDDataNetError as exc:
         _fail(exc.display_message())
 
@@ -289,6 +298,7 @@ def card(
             write_checksums(work_dir)
             workspace.finalize()
             print_success(str(out))
+            _next(f"Run `mddatanet inspect {out}` to review the refreshed dataset card context.")
     except MDDataNetError as exc:
         _fail(exc.display_message())
 
@@ -299,6 +309,7 @@ def export_manifest_command(
     out: Path = typer.Option(..., "--out", help="Output Hub registry directory."),
     download_url: str | None = typer.Option(None, "--download-url", help="External package download URL."),
     dataset_id: str | None = typer.Option(None, "--dataset-id", help="Hub dataset ID."),
+    verify_download: bool = typer.Option(False, "--verify-download", help="Check external URL metadata."),
     overwrite: bool = typer.Option(False, "--overwrite"),
 ) -> None:
     """Export Hub-ready metadata registry files."""
@@ -309,9 +320,11 @@ def export_manifest_command(
             out=out,
             download_url=download_url,
             dataset_id=dataset_id,
+            verify_download=verify_download,
             overwrite=overwrite,
         )
         print_success(str(result))
+        _next("Upload the package file to external storage, then add this registry folder to the future mddatanet-hub PR.")
     except MDDataNetError as exc:
         _fail(exc.display_message())
 
@@ -367,6 +380,7 @@ def export_schema(
 
     import json
     from mddatanet.format.schema import Metadata, Provenance, FeatureConfig, EventConfig, SplitManifest
+    from mddatanet.hub.manifest import HubDownload, HubManifest
     
     out_dir.mkdir(parents=True, exist_ok=True)
     models = {
@@ -375,6 +389,8 @@ def export_schema(
         "feature_config": FeatureConfig,
         "events": EventConfig,
         "splits": SplitManifest,
+        "hub_manifest": HubManifest,
+        "hub_download": HubDownload,
     }
     
     for name, model in models.items():
@@ -419,6 +435,10 @@ def _coerce_param(value: str) -> object:
 
 def _command_string() -> str:
     return " ".join(sys.argv)
+
+
+def _next(message: str) -> None:
+    console.print(f"What's next? {message}")
 
 
 def _fail(message: str) -> None:

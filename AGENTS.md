@@ -95,13 +95,15 @@ The current pipeline can:
   contact count, dihedral, RMSD, radius of gyration, and native contact
   fraction;
 - apply custom event YAML or built-in presets such as `ligand_unbinding`;
-- generate `event_now`, inclusive `event_future_H`, and `time_to_event`;
+- generate `event_now`, fixed-horizon `event_future_H`,
+  `event_future_H_valid_mask`, and per-run `time_to_event`;
 - split temporally, randomly, or by trajectory/run IDs;
 - validate package structure, schemas, array lengths, splits, run records, and
   checksums;
-- inspect package summaries;
+- inspect package summaries, per-run details, and descriptive label metrics;
 - run a runtime-generated ligand unbinding demo without committed demo data;
-- export Hub-ready registry metadata files.
+- export Hub-ready registry metadata files, metrics files, and optional
+  `citation.bib`.
 
 ## Current Package Format
 
@@ -260,16 +262,17 @@ Feature and label work (MOSTLY DONE):
   formation/breaking, hydrogen bond formation/breaking, dihedral transition,
   domain opening, loop opening.
 - [x] Store richer feature metadata and label statistics in machine-readable JSON (`label_statistics.json`).
-- [ ] Validate that future labels match horizon semantics more deeply.
+- [x] Validate that future labels match fixed-horizon semantics with per-run
+  valid masks.
 - [x] Add window extraction utilities for downstream ML training (`mddatanet.utils.windows`).
-- [ ] Add optional baseline metrics generation later.
+- [x] Add descriptive baseline dataset metrics generation.
 
 Hub-readiness work (NEXT PHASE):
 
-- [ ] Stabilize `manifest.json` and `download.yaml` schemas.
+- [x] Stabilize versioned `manifest.json` and `download.yaml` schemas.
 - [x] Add JSON Schema exports for Hub CI (`export-schema`).
-- [ ] Add `citation.bib` and `baseline_metrics.json` support in manifest export.
-- [ ] Add URL/checksum verification for external downloads.
+- [x] Add `citation.bib` and `baseline_metrics.json` support in manifest export.
+- [x] Add opt-in URL size verification for external downloads.
 - [ ] Build `mddatanet-hub` as a separate metadata registry repository.
 
 Documentation and packaging work:
@@ -278,8 +281,9 @@ Documentation and packaging work:
   examples, preset examples, package format docs, Hub registry workflow, and
   contribution guide.
 - Add API docs for Python users.
-- Add CI for tests, linting, and package build.
-- Add release workflow for PyPI once the API stabilizes.
+- Add CI for tests, linting, and package build. (DONE for GitHub Actions)
+- Add release workflow for PyPI once the API stabilizes. (TestPyPI manual
+  workflow exists; PyPI remains intentionally manual)
 - Add a changelog and semantic versioning policy.
 
 Scientific/product work:
@@ -290,4 +294,3 @@ Scientific/product work:
 - Decide which dataset licenses are acceptable for Hub inclusion.
 - Decide required metadata fields for curated Hub approval.
 - Add responsible-use language to dataset cards.
-

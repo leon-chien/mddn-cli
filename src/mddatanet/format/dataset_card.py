@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from mddatanet.format.schema import Metadata, Provenance
 
 
-def render_dataset_card(metadata: Metadata, provenance: Provenance | None = None) -> str:
+def render_dataset_card(
+    metadata: Metadata,
+    provenance: Provenance | None = None,
+    *,
+    baseline_metrics: dict | None = None,
+) -> str:
     """Render a concise dataset card from package metadata."""
 
     lines = [
@@ -42,6 +48,18 @@ def render_dataset_card(metadata: Metadata, provenance: Provenance | None = None
     else:
         lines.append("- None yet")
 
+    events = (baseline_metrics or {}).get("events", {})
+    if events:
+        lines.extend(["", "## Label Statistics"])
+        for event_name, metrics in events.items():
+            lines.append(
+                f"- {event_name}: event_now positive rate "
+                f"{metrics.get('event_now_positive_rate', 0.0):.3f}; "
+                f"valid future positive rate {metrics.get('valid_future_positive_rate', 0.0):.3f}; "
+                f"valid future frames {metrics.get('valid_future_frame_count', 0)}; "
+                f"transitions {metrics.get('transition_count', 0)}"
+            )
+
     lines.extend(
         [
             "",
@@ -68,4 +86,11 @@ def render_dataset_card(metadata: Metadata, provenance: Provenance | None = None
 
 def write_dataset_card(package_dir: str | Path, metadata: Metadata, provenance: Provenance | None = None) -> None:
     path = Path(package_dir) / "dataset_card.md"
-    path.write_text(render_dataset_card(metadata, provenance), encoding="utf-8")
+    metrics_path = Path(package_dir) / "baseline_metrics.json"
+    baseline_metrics = None
+    if metrics_path.exists():
+        baseline_metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+    path.write_text(
+        render_dataset_card(metadata, provenance, baseline_metrics=baseline_metrics),
+        encoding="utf-8",
+    )

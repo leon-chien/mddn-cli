@@ -16,7 +16,8 @@ from mddatanet.io.checksums import sha256_file, write_checksums
 from mddatanet.io.workspace import PackageWorkspace
 from mddatanet.io.zarr_store import create_array, open_zarr_group, write_index_names
 from mddatanet.labels.events import evaluate_event, referenced_features
-from mddatanet.labels.future import write_future_event_labels, write_time_to_event
+from mddatanet.labels.future import write_future_event_labels_by_runs, write_time_to_event_by_runs
+from mddatanet.labels.metrics import write_metrics_files
 from mddatanet.presets.registry import registry as preset_registry
 from mddatanet.presets.resolver import resolve_preset
 from mddatanet.utils.errors import LabelError, MDDataNetError
@@ -83,13 +84,7 @@ def label_package(
         zarr_root = open_zarr_group(work_dir / "dataset.zarr", mode="a")
         write_index_names(zarr_root, event_names=metadata.labels.event_names)
         
-        # Compute and store label statistics
-        from mddatanet.format.validation import _label_positive_rates
-        stats = _label_positive_rates(zarr_root["labels"])
-        (work_dir / "label_statistics.json").write_text(
-            json.dumps(stats, indent=2) + "\n", encoding="utf-8"
-        )
-        
+        write_metrics_files(work_dir, zarr_root)
         write_metadata(work_dir, metadata)
         write_provenance(work_dir, provenance)
         write_dataset_card(work_dir, metadata, provenance)
@@ -109,6 +104,8 @@ def _write_labels(zarr_root: Any, event_config: EventConfig, num_frames: int) ->
 
     feature_group = zarr_root["features"]
     label_group = zarr_root["labels"]
+    arrays_group = zarr_root["arrays"] if "arrays" in zarr_root else {}
+    run_ids = arrays_group["run_ids"] if "run_ids" in arrays_group else None
     feature_names = set(feature_group.keys())
 
     with Progress(
@@ -146,6 +143,14 @@ def _write_labels(zarr_root: Any, event_config: EventConfig, num_frames: int) ->
                 chunks=(min(max(num_frames, 1), 65_536),),
                 overwrite=True,
             )
+            valid_mask = create_array(
+                event_group,
+                f"event_future_{event.horizon_frames}_valid_mask",
+                shape=(num_frames,),
+                dtype="bool",
+                chunks=(min(max(num_frames, 1), 65_536),),
+                overwrite=True,
+            )
             tte = create_array(
                 event_group,
                 "time_to_event",
@@ -154,8 +159,14 @@ def _write_labels(zarr_root: Any, event_config: EventConfig, num_frames: int) ->
                 chunks=(min(max(num_frames, 1), 65_536),),
                 overwrite=True,
             )
-            write_future_event_labels(event_now, future, horizon_frames=event.horizon_frames)
-            write_time_to_event(event_now, tte)
+            write_future_event_labels_by_runs(
+                event_now,
+                future,
+                valid_mask,
+                horizon_frames=event.horizon_frames,
+                run_ids=run_ids,
+            )
+            write_time_to_event_by_runs(event_now, tte, run_ids=run_ids)
             progress.update(task, advance=1)
 
 
