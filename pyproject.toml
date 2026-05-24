@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 authors = [
-  { name = "Leon Chien", email = "maintainers@mddatanet.org" }
+  { name = "Leon Chien" }
 ]
 keywords = ["molecular-dynamics", "machine-learning", "datasets", "zarr", "mdanalysis"]
 classifiers = [
