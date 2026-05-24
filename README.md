@@ -8,20 +8,24 @@ features, applies reproducible event definitions, generates current-event and
 future-event labels, creates train/validation/test splits, tracks provenance,
 and packages everything into a `.mddatanet.zip` file.
 
-This repository is in an early local-CLI build phase. The current implementation
-can convert small/medium MDAnalysis-readable trajectories into MDDataNet
-packages, compute YAML-defined trajectory features, generate event labels,
-create splits, validate packages, inspect packages, and pack/unpack archives.
+This repository is in an active build phase. The current implementation
+can convert large MDAnalysis-readable trajectories into MDDataNet
+packages with chunking and progress reporting, compute trajectory features
+with PBC awareness, generate event labels with class balance statistics,
+create splits with leakage protection, validate packages with repair suggestions, 
+and export JSON Schemas for interoperability.
 
-Example datasets, user config templates, and bundled demo assets are
-intentionally deferred. The demo generates tiny synthetic data at runtime.
+Example datasets and user config templates are intentionally deferred. 
+The demo generates tiny synthetic data at runtime.
 
 ## Quickstart
 
 ```bash
 python -m pip install -e ".[dev]"
 mddatanet demo
-mddatanet inspect outputs/ligand_unbinding_demo.mddatanet.zip
+mddatanet inspect outputs/ligand_unbinding_demo.mddatanet.zip --labels
+mddatanet validate outputs/ligand_unbinding_demo.mddatanet.zip
+mddatanet export-schema --out-dir schemas
 ```
 
 The demo creates a small synthetic protein-ligand trajectory, applies the
@@ -44,13 +48,23 @@ It sits above trajectory readers and below the future MDDataNet Hub.
 ## Intended CLI
 
 ```bash
-mddatanet convert --topology system.psf --coordinates system.pdb --trajectory run.dcd --name kinase_ligand_run1 --out kinase_ligand_run1.mddatanet.zip
-mddatanet featurize --input kinase_ligand_run1.mddatanet.zip --features features.yaml --out kinase_ligand_features.mddatanet.zip
-mddatanet label --input kinase_ligand_run1.mddatanet.zip --preset ligand_unbinding --ligand "resname LIG" --pocket "protein" --param distance_threshold=15.0 --param horizon_frames=500 --out kinase_ligand_labeled.mddatanet.zip
-mddatanet split --input kinase_ligand_labeled.mddatanet.zip --strategy temporal --gap 100 --out kinase_ligand_ready.mddatanet.zip
-mddatanet validate kinase_ligand_ready.mddatanet.zip
-mddatanet inspect kinase_ligand_ready.mddatanet.zip
-mddatanet export-manifest kinase_ligand_ready.mddatanet.zip --out hub/kinase_ligand_ready
+# Convert with explicit chunking for large files
+mddatanet convert --topology system.psf --trajectory run.dcd --name kinase_run1 --out kinase.mddatanet --chunk-size 1000
+
+# Featurize with automatic PBC handling (if box info exists)
+mddatanet featurize --input kinase.mddatanet --features features.yaml --out kinase_feat.mddatanet
+
+# Label with scientific presets
+mddatanet label --input kinase_feat.mddatanet --preset ligand_unbinding --ligand "resname LIG" --pocket "protein" --out kinase_labeled.mddatanet
+
+# Split with leakage protection gaps
+mddatanet split --input kinase_labeled.mddatanet --strategy temporal --gap 100 --out kinase_ready.mddatanet
+
+# Validate and get repair suggestions
+mddatanet validate kinase_ready.mddatanet
+
+# Export Schemas for tool integration
+mddatanet export-schema --out-dir schemas
 ```
 
 Multiple replicate trajectories can be packaged together with repeated
@@ -58,6 +72,22 @@ Multiple replicate trajectories can be packaged together with repeated
 
 ```bash
 mddatanet convert --topology system.psf --trajectory run1.dcd --trajectory run2.dcd --run-id run1 --run-id run2 --name kinase_replicates --out kinase_replicates.mddatanet.zip
+```
+
+## Machine Learning Integration
+
+MDDataNet packages are designed for easy ingestion into ML pipelines. 
+You can use the built-in windowing utilities to generate samples:
+
+```python
+from pathlib import Path
+from mddatanet.utils.windows import iter_windows
+
+package = Path("kinase_ready.mddatanet")
+for sample in iter_windows(package, window_size=50, label_name="ligand_unbinding/event_future_500"):
+    X = sample["features"] # shape (50, num_features)
+    y = sample["label"]    # future label at end of window
+    # train model...
 ```
 
 ## Package Format

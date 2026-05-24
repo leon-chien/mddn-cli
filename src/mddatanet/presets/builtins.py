@@ -154,5 +154,126 @@ BUILTIN_PRESETS: list[dict] = [
             ],
         },
     },
+    {
+        "name": "hydrogen_bond_breaking",
+        "category": "Interactions",
+        "description": "Detect hydrogen bond breaking with a distance threshold.",
+        "required_args": ["selection_a", "selection_b"],
+        "default_params": {"distance_threshold": 3.5, "horizon_frames": 500},
+        "features": [
+            {
+                "name": "hbond_distance",
+                "type": "min_distance",
+                "selection_a": "{selection_a}",
+                "selection_b": "{selection_b}",
+                "units": "angstrom",
+            }
+        ],
+        "event": {
+            "name": "hydrogen_bond_breaking",
+            "type": "feature_threshold",
+            "feature": "hbond_distance",
+            "operator": "greater_than",
+            "threshold": "{distance_threshold}",
+            "horizon_frames": "{horizon_frames}",
+        },
+    },
+    {
+        "name": "hydrogen_bond_formation",
+        "category": "Interactions",
+        "description": "Detect hydrogen bond formation with a distance threshold.",
+        "required_args": ["selection_a", "selection_b"],
+        "default_params": {"distance_threshold": 3.0, "horizon_frames": 500},
+        "features": [
+            {
+                "name": "hbond_distance",
+                "type": "min_distance",
+                "selection_a": "{selection_a}",
+                "selection_b": "{selection_b}",
+                "units": "angstrom",
+            }
+        ],
+        "event": {
+            "name": "hydrogen_bond_formation",
+            "type": "feature_threshold",
+            "feature": "hbond_distance",
+            "operator": "less_than",
+            "threshold": "{distance_threshold}",
+            "horizon_frames": "{horizon_frames}",
+        },
+    },
+    {
+        "name": "dihedral_transition",
+        "category": "Conformation",
+        "description": "Detect transition of a dihedral angle past a threshold.",
+        "required_args": ["atoms"],
+        "default_params": {"angle_threshold": 0.0, "horizon_frames": 500},
+        "features": [
+            {
+                "name": "target_dihedral",
+                "type": "dihedral",
+                "atoms": "{atoms}",
+                "units": "degrees",
+            }
+        ],
+        "event": {
+            "name": "dihedral_transition",
+            "type": "feature_threshold",
+            "feature": "target_dihedral",
+            "operator": "greater_than",
+            "threshold": "{angle_threshold}",
+            "horizon_frames": "{horizon_frames}",
+        },
+    },
+    {
+        "name": "domain_opening",
+        "category": "Protein",
+        "description": "Detect domain opening using center-of-geometry distance.",
+        "required_args": ["selection_a", "selection_b"],
+        "default_params": {"distance_threshold": 25.0, "horizon_frames": 500},
+        "features": [
+            {
+                "name": "domain_distance",
+                "type": "distance",
+                "selection_a": "{selection_a}",
+                "selection_b": "{selection_b}",
+                "mode": "center_of_geometry",
+                "units": "angstrom",
+            }
+        ],
+        "event": {
+            "name": "domain_opening",
+            "type": "feature_threshold",
+            "feature": "domain_distance",
+            "operator": "greater_than",
+            "threshold": "{distance_threshold}",
+            "horizon_frames": "{horizon_frames}",
+        },
+    },
+    {
+        "name": "loop_opening",
+        "category": "Protein",
+        "description": "Detect loop opening using center-of-geometry distance to a reference point.",
+        "required_args": ["selection_a", "selection_b"],
+        "default_params": {"distance_threshold": 10.0, "horizon_frames": 500},
+        "features": [
+            {
+                "name": "loop_distance",
+                "type": "distance",
+                "selection_a": "{selection_a}",
+                "selection_b": "{selection_b}",
+                "mode": "center_of_geometry",
+                "units": "angstrom",
+            }
+        ],
+        "event": {
+            "name": "loop_opening",
+            "type": "feature_threshold",
+            "feature": "loop_distance",
+            "operator": "greater_than",
+            "threshold": "{distance_threshold}",
+            "horizon_frames": "{horizon_frames}",
+        },
+    },
 ]
 

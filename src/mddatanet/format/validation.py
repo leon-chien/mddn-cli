@@ -19,6 +19,7 @@ class ValidationResult:
     checks: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    suggestions: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -30,8 +31,10 @@ class ValidationResult:
     def add_warning(self, message: str) -> None:
         self.warnings.append(message)
 
-    def add_error(self, message: str) -> None:
+    def add_error(self, message: str, suggestion: str | None = None) -> None:
         self.errors.append(message)
+        if suggestion:
+            self.suggestions.append(suggestion)
 
 
 def validate_package(package_path: str | Path, *, check_checksums: bool = True) -> ValidationResult:
@@ -49,7 +52,7 @@ def validate_package(package_path: str | Path, *, check_checksums: bool = True) 
                 _validate_array_shapes(zarr_root, metadata.system.num_frames, result)
                 if provenance is not None:
                     _validate_runs(zarr_root, metadata.system.num_frames, provenance, result)
-                _validate_splits(zarr_root, metadata.system.num_frames, result)
+                _validate_splits(zarr_root, metadata.system.num_frames, metadata, result)
             if check_checksums:
                 _validate_checksums(root, result)
     except Exception as exc:  # keep validation user-facing
@@ -159,7 +162,7 @@ def _validate_metadata(root: Path, result: ValidationResult):
     try:
         metadata = read_metadata(root)
     except Exception as exc:
-        result.add_error(f"metadata.json invalid: {exc}")
+        result.add_error(f"metadata.json invalid: {exc}", suggestion="Check JSON syntax and required fields in metadata.json.")
         return None
     result.add_check("metadata.json valid")
     return metadata
@@ -169,7 +172,7 @@ def _validate_provenance(root: Path, result: ValidationResult):
     try:
         provenance = read_provenance(root)
     except Exception as exc:
-        result.add_error(f"provenance.json invalid: {exc}")
+        result.add_error(f"provenance.json invalid: {exc}", suggestion="Check JSON syntax in provenance.json.")
         return None
     result.add_check("provenance.json valid")
     return provenance
@@ -182,11 +185,14 @@ def _validate_zarr(root: Path, result: ValidationResult):
     try:
         zarr_root = open_zarr_group(zarr_path, mode="r")
     except Exception as exc:
-        result.add_error(f"dataset.zarr unreadable: {exc}")
+        result.add_error(f"dataset.zarr unreadable: {exc}", suggestion="Check for corrupt Zarr storage or permission issues.")
         return None
     missing = require_root_groups(zarr_root)
     if missing:
-        result.add_error(f"dataset.zarr missing groups: {', '.join(missing)}")
+        result.add_error(
+            f"dataset.zarr missing groups: {', '.join(missing)}",
+            suggestion="The package might be partially generated. Try re-running conversion/featurization.",
+        )
     else:
         result.add_check("dataset.zarr required groups valid")
     return zarr_root
@@ -199,7 +205,7 @@ def _validate_array_shapes(zarr_root: Any, num_frames: int, result: ValidationRe
             if name in arrays:
                 _check_first_dim(arrays[name], num_frames, f"arrays/{name}", result)
             else:
-                result.add_error(f"arrays/{name} missing")
+                result.add_error(f"arrays/{name} missing", suggestion=f"Critical trajectory array {name} is missing.")
         for name in ("atom_names", "residue_ids", "residue_names"):
             if name in arrays:
                 result.add_check(f"arrays/{name} exists")
@@ -215,7 +221,7 @@ def _validate_array_shapes(zarr_root: Any, num_frames: int, result: ValidationRe
     for event_name in _group_keys(zarr_root["labels"]):
         event_group = zarr_root["labels"][event_name]
         if "event_now" not in event_group:
-            result.add_error(f"labels/{event_name}/event_now missing")
+            result.add_error(f"labels/{event_name}/event_now missing", suggestion=f"Re-run `mddatanet label` for {event_name}.")
         if "time_to_event" not in event_group:
             result.add_error(f"labels/{event_name}/time_to_event missing")
         if not any(name.startswith("event_future_") for name in _group_keys(event_group)):
@@ -226,24 +232,61 @@ def _validate_array_shapes(zarr_root: Any, num_frames: int, result: ValidationRe
         _validate_index(zarr_root, result)
 
 
-def _validate_splits(zarr_root: Any, num_frames: int, result: ValidationResult) -> None:
+def _validate_splits(zarr_root: Any, num_frames: int, metadata: Any, result: ValidationResult) -> None:
     if "splits" not in zarr_root:
         return
-    seen: set[int] = set()
+    import numpy as np
+
+    seen: dict[str, np.ndarray] = {}
     for split_name in ("train", "val", "test"):
         splits = zarr_root["splits"]
         if split_name not in splits:
             continue
-        split_array = splits[split_name]
-        for chunk_start in range(0, int(split_array.shape[0]), 65_536):
-            chunk_stop = min(chunk_start + 65_536, int(split_array.shape[0]))
-            for value in split_array[chunk_start:chunk_stop]:
-                index = int(value)
-                if index < 0 or index >= num_frames:
-                    result.add_error(f"splits/{split_name} contains out-of-range index {index}")
-                if index in seen:
-                    result.add_error(f"splits/{split_name} overlaps at index {index}")
-                seen.add(index)
+        split_array = splits[split_name][:]
+        if len(split_array) == 0:
+            result.add_warning(f"splits/{split_name} is empty")
+            continue
+            
+        # Basic range and overlap check
+        if (split_array < 0).any() or (split_array >= num_frames).any():
+            result.add_error(f"splits/{split_name} contains out-of-range indices")
+        
+        seen[split_name] = split_array
+
+    # Check for overlaps between different splits
+    names = list(seen.keys())
+    for i in range(len(names)):
+        for j in range(i + 1, len(names)):
+            a = set(seen[names[i]])
+            b = set(seen[names[j]])
+            overlap = a & b
+            if overlap:
+                result.add_error(
+                    f"splits/{names[i]} and splits/{names[j]} overlap at {len(overlap)} indices.",
+                    suggestion="Re-run `mddatanet split` to generate non-overlapping splits.",
+                )
+
+    # Check leakage gaps if strategy is temporal
+    if metadata.splits and metadata.splits.strategy == "temporal" and metadata.splits.gap > 0:
+        gap = metadata.splits.gap
+        # For temporal split, we expect train < val < test typically.
+        if "train" in seen and "val" in seen:
+            max_train = seen["train"].max()
+            min_val = seen["val"].min()
+            if min_val - max_train <= gap:
+                result.add_error(
+                    f"Temporal gap between train and val is {min_val - max_train}, expected > {gap}.",
+                    suggestion="Increase --gap in `mddatanet split` or check if data is sufficient.",
+                )
+        if "val" in seen and "test" in seen:
+            max_val = seen["val"].max()
+            min_test = seen["test"].min()
+            if min_test - max_val <= gap:
+                result.add_error(
+                    f"Temporal gap between val and test is {min_test - max_val}, expected > {gap}.",
+                    suggestion="Increase --gap in `mddatanet split`.",
+                )
+
     if seen:
         result.add_check("splits valid")
 
@@ -264,7 +307,10 @@ def _validate_runs(zarr_root: Any, num_frames: int, provenance: Any, result: Val
             result.add_error(f"run '{run.run_id}' frame count does not match package range")
         total += run.num_frames
     if total != num_frames:
-        result.add_error(f"run frame total {total} does not match frame count {num_frames}")
+        result.add_error(
+            f"run frame total {total} does not match frame count {num_frames}",
+            suggestion="Run records might be corrupted. Check convert.py logs.",
+        )
     else:
         result.add_check("run records valid")
     arrays = zarr_root["arrays"] if "arrays" in zarr_root else None

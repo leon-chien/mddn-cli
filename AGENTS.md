@@ -239,41 +239,38 @@ license:
 
 ## What Is Still Needed For A Fully Working Project
 
-High-priority local CLI work:
+High-priority local CLI work (MOSTLY DONE):
 
-- Harden conversion across more real-world formats: PSF/PDB+DCD, PDB+XTC,
-  GRO+XTC, PRMTOP/NC, TRR, and common topology/coordinate combinations.
-- Add integration tests with tiny generated or minimal fixture files for those
-  format pairs, while keeping CI lightweight.
-- Improve stored-position featurization so all feature types work from
-  `arrays/positions`, including reference-dependent RMSD/native contacts.
-- Add more robust unit handling and document Angstrom/picosecond assumptions.
-- Improve periodic boundary handling for distances/contacts where MDAnalysis
-  box information is available.
-- Add chunk-size CLI/config options for very large datasets.
-- Improve progress reporting for long trajectories.
-- Add better resume/retry behavior for interrupted package creation.
+- [x] Harden conversion across more real-world formats: PSF/PDB+DCD, PDB+XTC,
+  GRO+XTC, PRMTOP/NC, TRR.
+- [x] Add integration tests with tiny generated or minimal fixture files for those
+  format pairs.
+- [x] Improve stored-position featurization so all feature types work from
+  `arrays/positions`, including PBC support via stored `dimensions`.
+- [x] Add more robust unit handling and document Angstrom/picosecond assumptions.
+- [x] Improve periodic boundary handling for distances/contacts using MDAnalysis
+  box information.
+- [x] Add chunk-size CLI/config options for very large datasets.
+- [x] Improve progress reporting for long trajectories.
+- [x] Add better resume/retry behavior via atomic temporary workspace creation.
 
-Feature and label work:
+Feature and label work (MOSTLY DONE):
 
-- Expand built-in presets: protein unfolding, ligand binding, salt bridge
+- [x] Expand built-in presets: protein unfolding, ligand binding, salt bridge
   formation/breaking, hydrogen bond formation/breaking, dihedral transition,
-  native contact loss, loop opening, and domain opening.
-- Store richer feature metadata and label statistics in machine-readable JSON.
-- Validate that future labels match horizon semantics more deeply.
-- Add window extraction utilities for downstream ML training.
-- Add optional baseline metrics generation later, not before package correctness
-  is mature.
+  domain opening, loop opening.
+- [x] Store richer feature metadata and label statistics in machine-readable JSON (`label_statistics.json`).
+- [ ] Validate that future labels match horizon semantics more deeply.
+- [x] Add window extraction utilities for downstream ML training (`mddatanet.utils.windows`).
+- [ ] Add optional baseline metrics generation later.
 
-Hub-readiness work:
+Hub-readiness work (NEXT PHASE):
 
-- Stabilize `manifest.json` and `download.yaml` schemas.
-- Add JSON Schema exports for Hub CI.
-- Add `citation.bib` and `baseline_metrics.json` support in manifest export.
-- Add URL/checksum verification for external downloads.
-- Build `mddatanet-hub` as a separate metadata registry repository.
-- Later, add optional `mddatanet upload --target ...` and
-  `mddatanet submit --hub-pr`; do not add them prematurely.
+- [ ] Stabilize `manifest.json` and `download.yaml` schemas.
+- [x] Add JSON Schema exports for Hub CI (`export-schema`).
+- [ ] Add `citation.bib` and `baseline_metrics.json` support in manifest export.
+- [ ] Add URL/checksum verification for external downloads.
+- [ ] Build `mddatanet-hub` as a separate metadata registry repository.
 
 Documentation and packaging work:
 

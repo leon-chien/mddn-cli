@@ -82,6 +82,14 @@ def label_package(
             provenance.event_config_checksum = sha256_file(work_dir / "events.yaml")
         zarr_root = open_zarr_group(work_dir / "dataset.zarr", mode="a")
         write_index_names(zarr_root, event_names=metadata.labels.event_names)
+        
+        # Compute and store label statistics
+        from mddatanet.format.validation import _label_positive_rates
+        stats = _label_positive_rates(zarr_root["labels"])
+        (work_dir / "label_statistics.json").write_text(
+            json.dumps(stats, indent=2) + "\n", encoding="utf-8"
+        )
+        
         write_metadata(work_dir, metadata)
         write_provenance(work_dir, provenance)
         write_dataset_card(work_dir, metadata, provenance)
@@ -97,45 +105,59 @@ def write_labels_in_place(package_dir: Path, event_config: EventConfig) -> None:
 
 
 def _write_labels(zarr_root: Any, event_config: EventConfig, num_frames: int) -> None:
+    from rich.progress import Progress, TextColumn, BarColumn, TaskProgressColumn, TimeRemainingColumn
+
     feature_group = zarr_root["features"]
     label_group = zarr_root["labels"]
     feature_names = set(feature_group.keys())
-    for event in event_config.events:
-        missing = referenced_features(event) - feature_names
-        if missing:
-            available = ", ".join(sorted(feature_names)) or "none"
-            raise MDDataNetError(
-                f"Event '{event.name}' references missing features: {', '.join(sorted(missing))}.",
-                suggestion=f"Available features: {available}.",
+
+    with Progress(
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TimeRemainingColumn(),
+        transient=True,
+    ) as progress:
+        task = progress.add_task("Generating labels...", total=len(event_config.events))
+        for event in event_config.events:
+            progress.update(task, description=f"Event: {event.name}")
+            missing = referenced_features(event) - feature_names
+            if missing:
+                available = ", ".join(sorted(feature_names)) or "none"
+                raise MDDataNetError(
+                    f"Event '{event.name}' references missing features: {', '.join(sorted(missing))}.",
+                    suggestion=f"Available features: {available}.",
+                )
+            event_group = label_group.require_group(event.name)
+            event_now = create_array(
+                event_group,
+                "event_now",
+                shape=(num_frames,),
+                dtype="bool",
+                chunks=(min(max(num_frames, 1), 65_536),),
+                overwrite=True,
             )
-        event_group = label_group.require_group(event.name)
-        event_now = create_array(
-            event_group,
-            "event_now",
-            shape=(num_frames,),
-            dtype="bool",
-            chunks=(min(max(num_frames, 1), 65_536),),
-            overwrite=True,
-        )
-        _write_event_now(feature_group, event, event_now, num_frames)
-        future = create_array(
-            event_group,
-            f"event_future_{event.horizon_frames}",
-            shape=(num_frames,),
-            dtype="bool",
-            chunks=(min(max(num_frames, 1), 65_536),),
-            overwrite=True,
-        )
-        tte = create_array(
-            event_group,
-            "time_to_event",
-            shape=(num_frames,),
-            dtype="int64",
-            chunks=(min(max(num_frames, 1), 65_536),),
-            overwrite=True,
-        )
-        write_future_event_labels(event_now, future, horizon_frames=event.horizon_frames)
-        write_time_to_event(event_now, tte)
+            _write_event_now(feature_group, event, event_now, num_frames)
+            future = create_array(
+                event_group,
+                f"event_future_{event.horizon_frames}",
+                shape=(num_frames,),
+                dtype="bool",
+                chunks=(min(max(num_frames, 1), 65_536),),
+                overwrite=True,
+            )
+            tte = create_array(
+                event_group,
+                "time_to_event",
+                shape=(num_frames,),
+                dtype="int64",
+                chunks=(min(max(num_frames, 1), 65_536),),
+                overwrite=True,
+            )
+            write_future_event_labels(event_now, future, horizon_frames=event.horizon_frames)
+            write_time_to_event(event_now, tte)
+            progress.update(task, advance=1)
+
 
 
 def _write_event_now(feature_group: Any, event: Any, output: Any, num_frames: int) -> None:

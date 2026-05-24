@@ -23,6 +23,8 @@ class SystemMetadata(StrictModel):
     num_frames: int = Field(ge=0)
     num_runs: int = Field(default=1, ge=0)
     timestep_ps: float | None = None
+    time_unit: str = "ps"
+    distance_unit: str = "angstrom"
     has_periodic_box: bool | None = None
     organism: str | None = None
     protein: str | None = None
@@ -117,6 +119,7 @@ class RunRecord(StrictModel):
     source_stop: int = Field(ge=0)
     source_stride: int = Field(ge=1)
     timestep_ps: float | None = None
+    time_unit: str = "ps"
     has_periodic_box: bool | None = None
 
     @model_validator(mode="after")

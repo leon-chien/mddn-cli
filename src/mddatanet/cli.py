@@ -48,6 +48,7 @@ def convert(
     stride: int = typer.Option(1, "--stride", min=1),
     start: int | None = typer.Option(None, "--start"),
     stop: int | None = typer.Option(None, "--stop"),
+    chunk_size: int = typer.Option(100, "--chunk-size", help="Processing chunk size (frames)."),
     store_positions: bool = typer.Option(False, "--store-positions/--no-store-positions"),
     license: str = typer.Option("unknown", "--license", help="Dataset license."),
     source_url: str | None = typer.Option(None, "--source-url", help="Original source URL."),
@@ -84,6 +85,7 @@ def convert(
             stride=stride,
             start=start,
             stop=stop,
+            chunk_size=chunk_size,
             store_positions=store_positions,
             license=license,
             source_url=source_url,
@@ -102,6 +104,7 @@ def featurize(
     input_path: Path = typer.Option(..., "--input", help="Input package."),
     features: Path = typer.Option(..., "--features", help="Feature YAML."),
     out: Path = typer.Option(..., "--out", help="Output package."),
+    chunk_size: int = typer.Option(100, "--chunk-size", help="Processing chunk size (frames)."),
     overwrite: bool = typer.Option(False, "--overwrite"),
 ) -> None:
     """Add trajectory-derived features to a package."""
@@ -112,6 +115,7 @@ def featurize(
             input_path=input_path,
             features_path=features,
             out=out,
+            chunk_size=chunk_size,
             overwrite=overwrite,
             command=_command_string(),
         )
@@ -208,6 +212,8 @@ def validate(
         console.print(f"! {warning}")
     for error in result.errors:
         console.print(f"✗ {error}")
+    for suggestion in result.suggestions:
+        console.print(f"  → Suggestion: {suggestion}")
     if not result.ok:
         raise typer.Exit(1)
     console.print("Package is valid.")
@@ -351,6 +357,31 @@ def presets_show(name: str) -> None:
         console.print_json(data=preset_registry.get(name))
     except MDDataNetError as exc:
         _fail(exc.display_message())
+
+
+@app.command("export-schema")
+def export_schema(
+    out_dir: Path = typer.Option(Path("schemas"), "--out-dir", help="Directory to write schemas."),
+) -> None:
+    """Export package format JSON Schemas."""
+
+    import json
+    from mddatanet.format.schema import Metadata, Provenance, FeatureConfig, EventConfig, SplitManifest
+    
+    out_dir.mkdir(parents=True, exist_ok=True)
+    models = {
+        "metadata": Metadata,
+        "provenance": Provenance,
+        "feature_config": FeatureConfig,
+        "events": EventConfig,
+        "splits": SplitManifest,
+    }
+    
+    for name, model in models.items():
+        schema = model.model_json_schema()
+        path = out_dir / f"{name}.schema.json"
+        path.write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8")
+        console.print(f"Exported {path}")
 
 
 @presets_app.command("explain")
