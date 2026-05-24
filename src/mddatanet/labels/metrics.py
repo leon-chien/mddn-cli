@@ -7,6 +7,8 @@ from pathlib import Path
 from statistics import mean, median
 from typing import Any
 
+from mddatanet.io.layout import run_ids_array
+
 
 DEFAULT_CHUNK_SIZE = 65_536
 
@@ -16,7 +18,7 @@ def compute_label_metrics(zarr_root: Any, *, chunk_size: int = DEFAULT_CHUNK_SIZ
 
     if "labels" not in zarr_root:
         return {}
-    run_ids = zarr_root["arrays"]["run_ids"] if "arrays" in zarr_root and "run_ids" in zarr_root["arrays"] else None
+    run_ids = run_ids_array(zarr_root)
     metrics: dict[str, Any] = {}
     for event_name in sorted(zarr_root["labels"].keys()):
         event_group = zarr_root["labels"][event_name]
@@ -25,7 +27,7 @@ def compute_label_metrics(zarr_root: Any, *, chunk_size: int = DEFAULT_CHUNK_SIZ
         event_now = event_group["event_now"]
         future_name = _future_label_name(event_group)
         future = event_group[future_name] if future_name else None
-        valid_name = f"{future_name}_valid_mask" if future_name else None
+        valid_name = f"{future_name}_valid" if future_name else None
         valid_mask = event_group[valid_name] if valid_name and valid_name in event_group else None
         time_to_event = event_group["time_to_event"] if "time_to_event" in event_group else None
         horizon = _horizon_from_name(future_name)
@@ -157,7 +159,9 @@ def _future_label_name(event_group: Any) -> str | None:
     names = [
         name
         for name in event_group.keys()
-        if name.startswith("event_future_") and not name.endswith("_valid_mask")
+        if name.startswith("event_future_")
+        and not name.endswith("_valid")
+        and not name.endswith("_valid_mask")
     ]
     return sorted(names)[0] if names else None
 

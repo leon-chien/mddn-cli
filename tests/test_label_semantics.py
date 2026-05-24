@@ -44,7 +44,7 @@ events:
 
     zarr_root = open_zarr_group(labeled / "dataset.zarr", mode="r")
     group = zarr_root["labels"]["ligand_unbinding"]
-    assert list(group["event_future_1_valid_mask"][:]) == [True, False, True, False]
+    assert list(group["event_future_1_valid"][:]) == [True, False, True, False]
     assert list(group["event_future_1"][:]) == [True, False, True, False]
     assert list(group["time_to_event"][:]) == [1, 0, 1, 0]
     metrics = json.loads((labeled / "baseline_metrics.json").read_text(encoding="utf-8"))

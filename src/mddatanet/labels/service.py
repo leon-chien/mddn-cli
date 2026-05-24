@@ -13,6 +13,7 @@ from mddatanet.format.metadata import read_metadata, write_metadata
 from mddatanet.format.provenance import read_provenance, write_provenance
 from mddatanet.format.schema import EventConfig, FeatureConfig
 from mddatanet.io.checksums import sha256_file, write_checksums
+from mddatanet.io.layout import run_ids_array
 from mddatanet.io.workspace import PackageWorkspace
 from mddatanet.io.zarr_store import create_array, open_zarr_group, write_index_names
 from mddatanet.labels.events import evaluate_event, referenced_features
@@ -30,6 +31,7 @@ def label_package(
     out: Path,
     events_path: Path | None = None,
     preset: str | None = None,
+    preset_yaml: Path | None = None,
     preset_args: dict[str, Any] | None = None,
     param_overrides: dict[str, Any] | None = None,
     overwrite: bool = False,
@@ -37,13 +39,16 @@ def label_package(
 ) -> Path:
     """Generate labels for an existing package."""
 
-    if events_path is None and preset is None:
-        raise LabelError("One of events_path or preset is required.")
+    if events_path is None and preset is None and preset_yaml is None:
+        raise LabelError("One of events_path, preset, or preset_yaml is required.")
+    if sum(value is not None for value in (events_path, preset, preset_yaml)) != 1:
+        raise LabelError("Use exactly one of events_path, preset, or preset_yaml.")
     workspace = PackageWorkspace(input_path, out, overwrite=overwrite)
     with workspace as work_dir:
-        if preset is not None:
+        if preset is not None or preset_yaml is not None:
+            preset_definition = preset_registry.get(preset) if preset is not None else read_yaml(preset_yaml)
             resolved = resolve_preset(
-                preset_registry.get(preset),
+                preset_definition,
                 args=preset_args or {},
                 param_overrides=param_overrides or {},
             )
@@ -61,11 +66,16 @@ def label_package(
                 write_metadata(work_dir, metadata)
                 write_index_names(zarr_root, feature_names=feature_names)
             event_config = EventConfig.model_validate(resolved.event_config)
+            write_yaml(resolved.feature_config, work_dir / "feature_config.yaml")
             write_yaml(resolved.event_config, work_dir / "events.yaml")
             (work_dir / "presets_used.json").write_text(
                 json.dumps({"presets": [resolved.__dict__]}, indent=2) + "\n",
                 encoding="utf-8",
             )
+            if preset_yaml is not None:
+                user_preset_dir = work_dir / "user_presets"
+                user_preset_dir.mkdir(exist_ok=True)
+                shutil.copyfile(preset_yaml, user_preset_dir / preset_yaml.name)
         else:
             event_config = EventConfig.model_validate(read_yaml(events_path))
             shutil.copyfile(events_path, work_dir / "events.yaml")
@@ -75,6 +85,10 @@ def label_package(
         provenance = read_provenance(work_dir)
         metadata.labels.event_names = [event.name for event in event_config.events]
         metadata.labels.num_events = len(metadata.labels.event_names)
+        metadata.analysis_summary.num_features = metadata.features.num_features
+        metadata.analysis_summary.num_events = metadata.labels.num_events
+        if preset is not None or preset_yaml is not None:
+            metadata.analysis_summary.presets_used = [event.name for event in event_config.events]
         if command:
             provenance.commands.append(command)
         if events_path is not None:
@@ -104,8 +118,7 @@ def _write_labels(zarr_root: Any, event_config: EventConfig, num_frames: int) ->
 
     feature_group = zarr_root["features"]
     label_group = zarr_root["labels"]
-    arrays_group = zarr_root["arrays"] if "arrays" in zarr_root else {}
-    run_ids = arrays_group["run_ids"] if "run_ids" in arrays_group else None
+    run_ids = run_ids_array(zarr_root)
     feature_names = set(feature_group.keys())
 
     with Progress(
@@ -145,7 +158,7 @@ def _write_labels(zarr_root: Any, event_config: EventConfig, num_frames: int) ->
             )
             valid_mask = create_array(
                 event_group,
-                f"event_future_{event.horizon_frames}_valid_mask",
+                f"event_future_{event.horizon_frames}_valid",
                 shape=(num_frames,),
                 dtype="bool",
                 chunks=(min(max(num_frames, 1), 65_536),),

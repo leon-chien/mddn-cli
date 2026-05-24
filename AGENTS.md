@@ -74,15 +74,18 @@ The current CLI supports:
 - `mddatanet convert`
 - `mddatanet featurize`
 - `mddatanet label`
+- `mddatanet analyze`
 - `mddatanet split`
 - `mddatanet validate`
 - `mddatanet inspect`
 - `mddatanet pack`
 - `mddatanet unpack`
+- `mddatanet split-package`
 - `mddatanet card`
 - `mddatanet export-manifest`
+- `mddatanet export-schema`
 - `mddatanet demo`
-- `mddatanet presets list/show/explain`
+- `mddatanet presets list/show/explain/validate-yaml`
 
 The current pipeline can:
 
@@ -90,17 +93,25 @@ The current pipeline can:
   packages;
 - ingest repeated `--trajectory` inputs as multi-run packages;
 - store per-frame `run_ids`, `trajectory_ids`, and `source_frame_indices`;
-- store raw positions only when requested via `--store-positions`;
+- store standardized trajectory/topology data by default under
+  `dataset.zarr/trajectory/*` and `dataset.zarr/topology/*`;
+- write compressed chunked coordinates by default using `hybrid + compressed`
+  storage;
+- create linked-coordinate packages for huge datasets using external coordinate
+  URLs and checksums;
 - compute first-pass features such as distance, min distance, contact,
-  contact count, dihedral, RMSD, radius of gyration, and native contact
-  fraction;
-- apply custom event YAML or built-in presets such as `ligand_unbinding`;
+  contact count, dihedral, RMSD, radius of gyration, native contact fraction,
+  and center-of-geometry distance;
+- apply custom event YAML, built-in presets, or user preset YAML;
+- run high-level preset analyses through `mddatanet analyze`;
 - generate `event_now`, fixed-horizon `event_future_H`,
-  `event_future_H_valid_mask`, and per-run `time_to_event`;
+  `event_future_H_valid`, and per-run `time_to_event`;
 - split temporally, randomly, or by trajectory/run IDs;
 - validate package structure, schemas, array lengths, splits, run records, and
   checksums;
 - inspect package summaries, per-run details, and descriptive label metrics;
+- split coordinate-heavy packages into a lightweight labels package plus a
+  coordinate archive for Hub-scale sharing;
 - run a runtime-generated ligand unbinding demo without committed demo data;
 - export Hub-ready registry metadata files, metrics files, and optional
   `citation.bib`.
@@ -112,7 +123,23 @@ An unpacked package should be shaped like:
 ```text
 dataset.mddatanet/
   dataset.zarr/
-    arrays/
+    trajectory/
+      positions
+      box_vectors
+      frame_indices
+      source_frame_indices
+      frame_times
+      trajectory_ids
+      run_ids
+    topology/
+      atom_names
+      atom_types
+      residue_names
+      residue_ids
+      chain_ids
+      masses
+      charges
+      bonds
     features/
     labels/
     splits/
@@ -120,11 +147,14 @@ dataset.mddatanet/
   metadata.json
   provenance.json
   feature_config.yaml
-  events.yaml
-  presets_used.json
-  splits.json
-  checksums.json
-  dataset_card.md
+    events.yaml
+    presets_used.json
+    user_presets/
+    splits.json
+    checksums.json
+    label_statistics.json
+    baseline_metrics.json
+    dataset_card.md
   README.md
   LICENSE
 ```
@@ -134,24 +164,70 @@ features, labels, events, or splits.
 
 Important Zarr arrays include:
 
-- `arrays/frame_indices`
-- `arrays/source_frame_indices`
-- `arrays/frame_times`
-- `arrays/trajectory_ids`
-- `arrays/run_ids`
-- `arrays/atom_names`
-- `arrays/residue_ids`
-- `arrays/residue_names`
-- `arrays/positions`, optional
+- `trajectory/frame_indices`
+- `trajectory/source_frame_indices`
+- `trajectory/frame_times`
+- `trajectory/trajectory_ids`
+- `trajectory/run_ids`
+- `trajectory/positions`, included by default unless `features-only`,
+  `--no-coordinates`, or `linked` storage is used
+- `trajectory/box_vectors`
+- `topology/atom_names`
+- `topology/atom_types`
+- `topology/residue_ids`
+- `topology/residue_names`
+- `topology/chain_ids`
+- `topology/masses`
+- `topology/charges`
+- `topology/bonds`
 - `features/{feature_name}`
 - `labels/{event_name}/event_now`
 - `labels/{event_name}/event_future_{horizon}`
+- `labels/{event_name}/event_future_{horizon}_valid`
 - `labels/{event_name}/time_to_event`
 - `splits/train`
 - `splits/val`
 - `splits/test`
 - `index/feature_names`
 - `index/event_names`
+
+The older `dataset.zarr/arrays/*` layout is legacy read compatibility only.
+Do not write new packages in that layout.
+
+## Trajectory-First Storage Rules
+
+The conceptual rule is:
+
+```text
+MDDataNet package = standardized MD trajectory + topology + temporal labels
+                    + metadata + provenance + splits + optional features
+```
+
+Features are useful derived analyses, but they are not the core dataset. The
+core dataset should look more like a video ML dataset: coordinates over time
+plus frame-level and future-window labels.
+
+`mddatanet convert` defaults:
+
+- `--data-mode hybrid`
+- `--storage-profile compressed`
+- `--coordinate-dtype float32`
+- `--compression zstd`
+- `--chunk-frames 100`
+- `--chunk-atoms 1000`
+- coordinates included by default
+
+Storage profiles:
+
+- `compressed`: default. Embedded chunked compressed Zarr coordinates.
+- `full`: embedded chunked coordinates using the user-requested precision; no
+  downsampling or quantization unless explicitly requested.
+- `linked`: no embedded `trajectory/positions`; package must include
+  `download.yaml` with coordinate URL/checksum metadata.
+
+Linked packages and `split-package` exist so Hub-scale datasets can keep large
+coordinates in Hugging Face Datasets, Zenodo, S3/R2, GCS, or institutional
+storage while GitHub/the Hub registry stores metadata only.
 
 ## Hub Registry Format
 
@@ -164,6 +240,9 @@ dataset_id/
   checksums.json
   manifest.json
   download.yaml
+  citation.bib
+  baseline_metrics.json
+  label_statistics.json
 ```
 
 The Hub repo should not store huge `.mddatanet.zip` files. It should store
@@ -204,6 +283,8 @@ license:
 
 - Keep the CLI useful without MDDataNet Hub.
 - Keep Hub upload/download commands out of scope until explicitly requested.
+- Keep direct Hub upload, download, submit, PR automation, and Hub website code
+  out of scope unless explicitly requested.
 - Keep command functions thin; put real behavior in service modules.
 - Prefer Typer for CLI commands, Rich for terminal output, Pydantic for schemas,
   MDAnalysis for MD loading, Zarr for array storage, PyYAML for config parsing,
@@ -221,7 +302,11 @@ license:
 - Use chunked Zarr writes for large arrays.
 - Prefer unpacked `.mddatanet/` directories during active processing of huge
   data; use `.mddatanet.zip` for sharing/export.
-- Store raw positions only when explicitly requested, and always with chunking.
+- Store coordinates by default, but always with chunking and compression.
+- For huge datasets, prefer linked coordinates or `split-package` rather than
+  putting massive coordinate blobs in the labels archive.
+- Never add lossy coordinate quantization by default; only use it when the user
+  explicitly passes coordinate precision.
 - Validate package structure and array shapes without materializing full arrays.
 - Generate labels in chunks where possible. Future-event and time-to-event
   labels may require reverse scans; do not load raw MD coordinates to do this.
@@ -247,8 +332,8 @@ High-priority local CLI work (MOSTLY DONE):
   GRO+XTC, PRMTOP/NC, TRR.
 - [x] Add integration tests with tiny generated or minimal fixture files for those
   format pairs.
-- [x] Improve stored-position featurization so all feature types work from
-  `arrays/positions`, including PBC support via stored `dimensions`.
+- [x] Improve stored-position featurization so supported feature types work from
+  `trajectory/positions`, including PBC support via stored `box_vectors`.
 - [x] Add more robust unit handling and document Angstrom/picosecond assumptions.
 - [x] Improve periodic boundary handling for distances/contacts using MDAnalysis
   box information.

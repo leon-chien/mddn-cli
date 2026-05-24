@@ -96,6 +96,10 @@ def export_manifest(
             summary={
                 "dataset_name": metadata.dataset_name,
                 "description": metadata.description,
+                "data_mode": metadata.data_mode,
+                "storage_profile": metadata.storage_profile,
+                "coordinate_storage": metadata.coordinate_storage.model_dump(mode="json"),
+                "sampling": metadata.sampling.model_dump(mode="json"),
                 "num_atoms": metadata.system.num_atoms,
                 "num_residues": metadata.system.num_residues,
                 "num_frames": metadata.system.num_frames,
@@ -119,6 +123,7 @@ def export_manifest(
         _copy_if_exists(root / "checksums.json", out / "checksums.json")
         _copy_if_exists(root / "baseline_metrics.json", out / "baseline_metrics.json")
         _copy_if_exists(root / "label_statistics.json", out / "label_statistics.json")
+        _copy_if_exists(root / "download.yaml", out / "package_download.yaml")
         _write_citation(metadata.source.citation, out / "citation.bib")
         (out / "manifest.json").write_text(
             json.dumps(manifest.model_dump(mode="json"), indent=2) + "\n",
@@ -173,6 +178,12 @@ def _structured_tags(root: Path, metadata, summary: dict[str, Any]) -> dict[str,
             "baseline_models": [],
         },
         "license": metadata.tags.get("license", {"data_license": metadata.license}),
+        "storage": {
+            "data_mode": metadata.data_mode,
+            "storage_profile": metadata.storage_profile,
+            "coordinates_included": metadata.coordinate_storage.included,
+            "coordinates_external": metadata.coordinate_storage.external,
+        },
     }
 
 

@@ -37,5 +37,5 @@ def test_convert_frame_slice_is_stop_exclusive(tmp_path):
     import zarr
 
     root = zarr.open_group(str(out / "dataset.zarr"), mode="r")
-    assert root["arrays"]["frame_indices"][:].tolist() == [1]
-
+    assert root["trajectory"]["source_frame_indices"][:].tolist() == [1]
+    assert root["trajectory"]["frame_indices"][:].tolist() == [0]

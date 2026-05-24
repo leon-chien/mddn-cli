@@ -12,6 +12,7 @@ from mddatanet.format.metadata import read_metadata, write_metadata
 from mddatanet.format.provenance import read_provenance, write_provenance
 from mddatanet.format.schema import FeatureConfig, FeatureDefinition, RunRecord
 from mddatanet.io.checksums import sha256_file, write_checksums
+from mddatanet.io.layout import box_array, positions_array, trajectory_group
 from mddatanet.io.loaders import load_universe
 from mddatanet.io.source import require_source_path, source_path
 from mddatanet.io.workspace import PackageWorkspace
@@ -100,8 +101,12 @@ def compute_features_in_place(
     topology = require_source_path(provenance, "topology")
     coordinates = source_path(provenance, "coordinates")
     zarr_root = open_zarr_group(package_dir / "dataset.zarr", mode="a")
-    arrays = zarr_root["arrays"]
-    frame_indices = arrays["source_frame_indices"] if "source_frame_indices" in arrays else arrays["frame_indices"]
+    trajectory = trajectory_group(zarr_root)
+    frame_indices = (
+        trajectory["source_frame_indices"]
+        if "source_frame_indices" in trajectory
+        else trajectory["frame_indices"]
+    )
     if int(frame_indices.shape[0]) != int(metadata.system.num_frames):
         raise FeatureError("arrays/frame_indices length does not match metadata frame count")
 
@@ -118,8 +123,8 @@ def compute_features_in_place(
         for definition in feature_config.features
     }
 
-    positions = arrays["positions"] if "positions" in arrays else None
-    stored_dimensions = arrays["dimensions"] if "dimensions" in arrays else None
+    positions = positions_array(zarr_root)
+    stored_dimensions = box_array(zarr_root)
     with Progress(
         TextColumn("[progress.description]{task.description}"),
         BarColumn(),
@@ -238,8 +243,9 @@ class _FeatureEvaluator:
         definition = self.definition
         if box is None:
             box = getattr(self.universe.trajectory.ts, "dimensions", None)
-        if definition.type == "distance":
-            return _distance_feature(self.selection_a, self.selection_b, definition.mode, box=box)
+        if definition.type in {"distance", "center_of_geometry_distance"}:
+            mode = "center_of_geometry" if definition.type == "center_of_geometry_distance" else definition.mode
+            return _distance_feature(self.selection_a, self.selection_b, mode, box=box)
         if definition.type == "min_distance":
             return _min_distance(self.selection_a.positions, self.selection_b.positions, box=box)
         if definition.type == "contact":

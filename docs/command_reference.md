@@ -15,11 +15,24 @@ Common options:
 - `--coordinates`: coordinate file when topology has no coordinates.
 - `--trajectory`: trajectory file; repeat for multiple runs.
 - `--run-id`: run identifier; repeat once for each trajectory.
+- `--trajectory-id`: trajectory identifier; repeat once for each trajectory.
 - `--start`, `--stop`, `--stride`: frame slicing.
 - `--chunk-size`: processing frame chunk size.
-- `--store-positions`: store raw positions in Zarr, chunked.
+- `--data-mode`: `hybrid`, `trajectory`, or `features-only`; default `hybrid`.
+- `--storage-profile`: `compressed`, `full`, or `linked`; default `compressed`.
+- `--no-coordinates`: omit embedded coordinates.
+- `--coordinate-dtype`: `float32` or `float64`.
+- `--compression`: `zstd`, `blosc-zstd`, or `none`.
+- `--chunk-frames`, `--chunk-atoms`: coordinate chunking controls.
+- `--coordinate-precision`: optional coordinate rounding precision in Angstrom.
+- `--coordinates-url`, `--coordinates-sha256`: required for linked coordinate packages.
+- `--topology-url`, `--topology-sha256`: optional linked topology metadata.
 - `--system-type`, `--simulation-engine`, `--force-field`, `--solvent`,
   `--ensemble`, `--organism`, `--protein`: metadata tags.
+
+Default conversion writes `dataset.zarr/trajectory/positions` and
+`dataset.zarr/topology/*`. Use `--storage-profile linked` for huge packages
+whose coordinates live in external storage.
 
 ## `mddatanet featurize`
 
@@ -48,6 +61,19 @@ mddatanet label --input features.mddatanet --events events.yaml --out labeled.md
 ```
 
 Labels are written under `dataset.zarr/labels/{event_name}`.
+
+## `mddatanet analyze`
+
+Run a preset-driven analysis in one step. This is the recommended high-level
+workflow for built-in or user-defined presets.
+
+```bash
+mddatanet analyze --input raw.mddatanet --preset ligand_unbinding --ligand "resname LIG" --pocket protein --out labeled.mddatanet
+mddatanet analyze --input raw.mddatanet --preset-yaml my_preset.yaml --param selection_a="segid A" --param selection_b="segid B" --out labeled.mddatanet
+```
+
+`analyze` resolves the preset, computes missing features, writes labels,
+updates metadata/cards/checksums, and records resolved configs.
 
 ## `mddatanet split`
 
@@ -89,6 +115,7 @@ mddatanet inspect ready.mddatanet.zip --json
 - `mddatanet unpack input.mddatanet.zip --out unpacked/`
 - `mddatanet card --input ready.mddatanet --out ready_with_card.mddatanet`
 - `mddatanet export-schema --out-dir schemas`
+- `mddatanet split-package --input ready.mddatanet.zip --out-labels dataset.labels.mddatanet.zip --out-coordinates dataset.coordinates.zarr.zip`
 
 ## Demo And Presets
 
@@ -97,6 +124,7 @@ mddatanet inspect ready.mddatanet.zip --json
 - `mddatanet presets list`
 - `mddatanet presets show ligand_unbinding`
 - `mddatanet presets explain ligand_unbinding`
+- `mddatanet presets validate-yaml my_preset.yaml`
 
 ## Hub Manifest Export
 

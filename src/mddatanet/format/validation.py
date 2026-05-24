@@ -10,6 +10,13 @@ from typing import Any
 from mddatanet.format.metadata import read_metadata
 from mddatanet.format.provenance import read_provenance
 from mddatanet.io.checksums import verify_checksums
+from mddatanet.io.layout import (
+    has_legacy_arrays,
+    positions_array,
+    run_ids_array,
+    topology_group,
+    trajectory_group,
+)
 from mddatanet.io.package import open_package
 from mddatanet.io.zarr_store import open_zarr_group, require_root_groups
 from mddatanet.labels.future import future_event_labels
@@ -51,7 +58,9 @@ def validate_package(package_path: str | Path, *, check_checksums: bool = True) 
             provenance = _validate_provenance(root, result)
             zarr_root = _validate_zarr(root, result)
             if zarr_root is not None and metadata is not None:
-                _validate_array_shapes(zarr_root, metadata.system.num_frames, result)
+                _validate_array_shapes(zarr_root, metadata, result)
+                if metadata.storage_profile == "linked":
+                    _validate_download_yaml(root, result)
                 if provenance is not None:
                     _validate_runs(zarr_root, metadata.system.num_frames, provenance, result)
                 _validate_splits(zarr_root, metadata.system.num_frames, metadata, result)
@@ -82,6 +91,11 @@ def inspect_package(
             "features": metadata.features.model_dump(mode="json"),
             "labels": metadata.labels.model_dump(mode="json"),
             "splits": metadata.splits.model_dump(mode="json") if metadata.splits else None,
+            "data_mode": metadata.data_mode,
+            "storage_profile": metadata.storage_profile,
+            "coordinate_storage": metadata.coordinate_storage.model_dump(mode="json"),
+            "sampling": metadata.sampling.model_dump(mode="json"),
+            "trajectory_summary": metadata.trajectory_summary.model_dump(mode="json"),
             "files": sorted(path.name for path in root.iterdir()),
             "validation_ok": validate_package(root).ok,
             "runs": [
@@ -99,6 +113,14 @@ def inspect_package(
         zarr_path = root / "dataset.zarr"
         if zarr_path.exists():
             zarr_root = open_zarr_group(zarr_path, mode="r")
+            pos = positions_array(zarr_root)
+            if pos is not None:
+                summary["coordinate_array"] = {
+                    "shape": tuple(pos.shape),
+                    "dtype": str(pos.dtype),
+                    "chunks": tuple(getattr(pos, "chunks", ()) or ()),
+                    "approx_size_bytes": int(pos.size * pos.dtype.itemsize),
+                }
             if include_features and "features" in zarr_root:
                 summary["feature_arrays"] = _array_listing(zarr_root["features"])
             if include_labels and "labels" in zarr_root:
@@ -126,7 +148,26 @@ def format_inspection(summary: dict[str, Any]) -> str:
         f"  Frames: {system.get('num_frames')}",
         f"  Runs: {summary.get('num_runs', system.get('num_runs', 1))}",
         f"  Timestep: {system.get('timestep_ps')} ps",
+        f"Data mode: {summary.get('data_mode')}",
+        f"Storage profile: {summary.get('storage_profile')}",
     ]
+    coordinate_storage = summary.get("coordinate_storage", {})
+    lines.extend(
+        [
+            f"Coordinates included: {'yes' if coordinate_storage.get('included') else 'no'}",
+            f"Coordinate dtype: {coordinate_storage.get('dtype') or 'n/a'}",
+            f"Compression: {coordinate_storage.get('compression') or 'n/a'}",
+            f"Chunk frames: {coordinate_storage.get('chunk_frames') or 'n/a'}",
+            f"Chunk atoms: {coordinate_storage.get('chunk_atoms') or 'n/a'}",
+            f"Stride: {summary.get('sampling', {}).get('stride')}",
+            f"Quantized: {'yes' if coordinate_storage.get('quantized') else 'no'}",
+        ]
+    )
+    if coordinate_storage.get("external"):
+        lines.append(f"External coordinates: {coordinate_storage.get('download_file') or 'download.yaml'}")
+    if summary.get("coordinate_array"):
+        size_mb = summary["coordinate_array"]["approx_size_bytes"] / (1024 * 1024)
+        lines.append(f"Approx coordinate array size: {size_mb:.2f} MiB")
     runs = summary.get("runs") or []
     if runs:
         lines.append("Runs:")
@@ -204,6 +245,9 @@ def _validate_zarr(root: Path, result: ValidationResult):
         result.add_error(f"dataset.zarr unreadable: {exc}", suggestion="Check for corrupt Zarr storage or permission issues.")
         return None
     missing = require_root_groups(zarr_root)
+    if missing and has_legacy_arrays(zarr_root):
+        result.add_warning("dataset.zarr uses legacy arrays/ layout; new packages write trajectory/ and topology/.")
+        missing = [name for name in missing if name not in {"trajectory", "topology"}]
     if missing:
         result.add_error(
             f"dataset.zarr missing groups: {', '.join(missing)}",
@@ -214,24 +258,11 @@ def _validate_zarr(root: Path, result: ValidationResult):
     return zarr_root
 
 
-def _validate_array_shapes(zarr_root: Any, num_frames: int, result: ValidationResult) -> None:
-    arrays = zarr_root["arrays"] if "arrays" in zarr_root else None
-    if arrays is not None:
-        for name in ("frame_indices", "frame_times"):
-            if name in arrays:
-                _check_first_dim(arrays[name], num_frames, f"arrays/{name}", result)
-            else:
-                result.add_error(f"arrays/{name} missing", suggestion=f"Critical trajectory array {name} is missing.")
-        for name in ("atom_names", "residue_ids", "residue_names"):
-            if name in arrays:
-                result.add_check(f"arrays/{name} exists")
-            else:
-                result.add_warning(f"arrays/{name} missing")
-        for name in ("source_frame_indices", "trajectory_ids", "run_ids"):
-            if name in arrays:
-                _check_first_dim(arrays[name], num_frames, f"arrays/{name}", result)
-            else:
-                result.add_warning(f"arrays/{name} missing")
+def _validate_array_shapes(zarr_root: Any, metadata: Any, result: ValidationResult) -> None:
+    num_frames = metadata.system.num_frames
+    num_atoms = metadata.system.num_atoms
+    _validate_trajectory_arrays(zarr_root, metadata, result)
+    _validate_topology_arrays(zarr_root, num_atoms, result)
     for feature_name in _group_keys(zarr_root["features"]):
         _check_first_dim(zarr_root["features"][feature_name], num_frames, f"features/{feature_name}", result)
     for event_name in _group_keys(zarr_root["labels"]):
@@ -247,6 +278,91 @@ def _validate_array_shapes(zarr_root: Any, num_frames: int, result: ValidationRe
         _validate_future_labels(zarr_root, event_name, result)
     if "index" in zarr_root:
         _validate_index(zarr_root, result)
+
+
+def _validate_trajectory_arrays(zarr_root: Any, metadata: Any, result: ValidationResult) -> None:
+    num_frames = metadata.system.num_frames
+    try:
+        trajectory = trajectory_group(zarr_root)
+    except KeyError:
+        result.add_error("dataset.zarr/trajectory missing", suggestion="Re-run `mddatanet convert` with a current version.")
+        return
+    prefix = "arrays" if has_legacy_arrays(zarr_root) else "trajectory"
+    for name in ("frame_indices", "frame_times"):
+        if name in trajectory:
+            _check_first_dim(trajectory[name], num_frames, f"{prefix}/{name}", result)
+        else:
+            result.add_error(f"{prefix}/{name} missing", suggestion=f"Critical trajectory array {name} is missing.")
+    for name in ("source_frame_indices", "trajectory_ids", "run_ids"):
+        if name in trajectory:
+            _check_first_dim(trajectory[name], num_frames, f"{prefix}/{name}", result)
+        else:
+            result.add_error(f"{prefix}/{name} missing", suggestion=f"Critical multi-run trajectory array {name} is missing.")
+    if "box_vectors" in trajectory:
+        _check_first_dim(trajectory["box_vectors"], num_frames, f"{prefix}/box_vectors", result)
+    elif "dimensions" in trajectory:
+        _check_first_dim(trajectory["dimensions"], num_frames, f"{prefix}/dimensions", result)
+    else:
+        result.add_warning(f"{prefix}/box_vectors missing")
+
+    positions = positions_array(zarr_root)
+    coordinate_storage = metadata.coordinate_storage
+    coordinates_required = (
+        metadata.storage_profile in {"compressed", "full"}
+        and metadata.data_mode != "features-only"
+        and bool(coordinate_storage.included)
+    )
+    if coordinates_required and positions is None:
+        result.add_error("trajectory/positions missing", suggestion="Use linked storage or rerun convert with coordinates included.")
+    if positions is not None:
+        if tuple(positions.shape) != (num_frames, metadata.system.num_atoms, 3):
+            result.add_error(
+                f"trajectory/positions shape {tuple(positions.shape)} does not match "
+                f"({num_frames}, {metadata.system.num_atoms}, 3)"
+            )
+        else:
+            result.add_check("trajectory/positions shape valid")
+        if coordinate_storage.dtype and str(positions.dtype) != coordinate_storage.dtype:
+            result.add_error(
+                f"trajectory/positions dtype {positions.dtype} does not match metadata {coordinate_storage.dtype}"
+            )
+        else:
+            result.add_check("trajectory/positions dtype valid")
+
+
+def _validate_topology_arrays(zarr_root: Any, num_atoms: int, result: ValidationResult) -> None:
+    try:
+        topology = topology_group(zarr_root)
+    except KeyError:
+        result.add_error("dataset.zarr/topology missing", suggestion="Re-run `mddatanet convert` with a current version.")
+        return
+    prefix = "arrays" if has_legacy_arrays(zarr_root) else "topology"
+    for name in ("atom_names", "residue_ids", "residue_names"):
+        if name in topology:
+            _check_first_dim(topology[name], num_atoms, f"{prefix}/{name}", result)
+        else:
+            result.add_error(f"{prefix}/{name} missing")
+    for name in ("atom_types", "chain_ids", "masses", "charges"):
+        if name in topology:
+            _check_first_dim(topology[name], num_atoms, f"{prefix}/{name}", result)
+        else:
+            result.add_warning(f"{prefix}/{name} missing")
+
+
+def _validate_download_yaml(root: Path, result: ValidationResult) -> None:
+    import yaml
+
+    download_path = root / "download.yaml"
+    if not download_path.exists():
+        result.add_error("download.yaml missing for linked package")
+        return
+    with download_path.open("r", encoding="utf-8") as handle:
+        data = yaml.safe_load(handle) or {}
+    coordinates = data.get("coordinates") or {}
+    if not coordinates.get("url") or not coordinates.get("sha256"):
+        result.add_error("download.yaml linked coordinates require url and sha256")
+    else:
+        result.add_check("download.yaml linked coordinates valid")
 
 
 def _validate_splits(zarr_root: Any, num_frames: int, metadata: Any, result: ValidationResult) -> None:
@@ -330,12 +446,12 @@ def _validate_runs(zarr_root: Any, num_frames: int, provenance: Any, result: Val
         )
     else:
         result.add_check("run records valid")
-    arrays = zarr_root["arrays"] if "arrays" in zarr_root else None
-    if arrays is not None and "run_ids" in arrays:
+    run_ids = run_ids_array(zarr_root)
+    if run_ids is not None:
         for run in provenance.runs:
-            sample = arrays["run_ids"][run.package_start : min(run.package_stop, run.package_start + 1)]
+            sample = run_ids[run.package_start : min(run.package_stop, run.package_start + 1)]
             if len(sample) and str(sample[0]) != run.run_id:
-                result.add_error(f"arrays/run_ids does not match provenance for run '{run.run_id}'")
+                result.add_error(f"trajectory/run_ids does not match provenance for run '{run.run_id}'")
 
 
 def _validate_checksums(root: Path, result: ValidationResult) -> None:
@@ -357,17 +473,18 @@ def _validate_future_labels(zarr_root: Any, event_name: str, result: ValidationR
     future_names = [
         name
         for name in _group_keys(event_group)
-        if name.startswith("event_future_") and not name.endswith("_valid_mask")
+        if name.startswith("event_future_")
+        and not name.endswith("_valid")
+        and not name.endswith("_valid_mask")
     ]
-    arrays = zarr_root["arrays"] if "arrays" in zarr_root else {}
-    run_ids = arrays["run_ids"] if "run_ids" in arrays else None
+    run_ids = run_ids_array(zarr_root)
     for future_name in future_names:
         try:
             horizon = int(future_name.rsplit("_", 1)[-1])
         except ValueError:
             result.add_error(f"labels/{event_name}/{future_name} has invalid horizon suffix")
             continue
-        mask_name = f"{future_name}_valid_mask"
+        mask_name = f"{future_name}_valid"
         if mask_name not in event_group:
             result.add_error(
                 f"labels/{event_name}/{mask_name} missing",

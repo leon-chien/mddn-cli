@@ -6,12 +6,12 @@ Each event writes:
 
 - `event_now`
 - `event_future_{H}`
-- `event_future_{H}_valid_mask`
+- `event_future_{H}_valid`
 - `time_to_event`
 
 `event_future_{H}` is fixed-horizon and run-aware. It is true only if the event
 occurs from frame `t` through `t + H` inside the same run. Tail frames without a
-full future horizon are marked false in `event_future_{H}_valid_mask`.
+full future horizon are marked false in `event_future_{H}_valid`.
 
 ## `feature_threshold`
 

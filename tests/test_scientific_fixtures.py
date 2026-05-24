@@ -73,8 +73,8 @@ def test_generated_multirun_trajectory_split(tmp_path):
     )
 
     zarr_root = open_zarr_group(ready / "dataset.zarr", mode="r")
-    train_runs = {str(zarr_root["arrays"]["run_ids"][index]) for index in zarr_root["splits"]["train"][:]}
-    test_runs = {str(zarr_root["arrays"]["run_ids"][index]) for index in zarr_root["splits"]["test"][:]}
+    train_runs = {str(zarr_root["trajectory"]["run_ids"][index]) for index in zarr_root["splits"]["train"][:]}
+    test_runs = {str(zarr_root["trajectory"]["run_ids"][index]) for index in zarr_root["splits"]["test"][:]}
     assert train_runs.isdisjoint(test_runs)
     assert validate_package(ready).ok
 

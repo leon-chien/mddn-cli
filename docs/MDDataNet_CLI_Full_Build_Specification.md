@@ -12,6 +12,22 @@
 
 The CLI must be useful by itself before the Hub exists.
 
+## 2026 Trajectory-First Update
+
+Current package writes are trajectory-first. The core dataset is standardized
+MD trajectory/topology data plus temporal labels, metadata, provenance, splits,
+and optional derived features. New packages write `dataset.zarr/trajectory/*`
+and `dataset.zarr/topology/*`; the older `arrays/` layout is read-only legacy
+compatibility.
+
+Default conversion is `--data-mode hybrid --storage-profile compressed`, which
+stores chunked compressed coordinates under
+`dataset.zarr/trajectory/positions`. For huge Hub-scale datasets, use
+`--storage-profile linked` with coordinate URLs/checksums or `split-package`
+to separate labels/metadata from a coordinate archive. The high-level preset
+workflow is `mddatanet analyze`; `featurize` and `label` remain lower-level
+advanced commands.
+
 ## Core Concept
 
 The user provides raw MD files such as PDB, PSF, DCD, XTC, TRR, NC, PRMTOP, or
@@ -360,4 +376,3 @@ Cover:
 - Validation failures.
 - Inspect output.
 - Demo command surface.
-

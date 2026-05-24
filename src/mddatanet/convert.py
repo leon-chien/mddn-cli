@@ -17,12 +17,16 @@ from mddatanet.format.dataset_card import write_dataset_card
 from mddatanet.format.metadata import write_metadata
 from mddatanet.format.provenance import write_provenance
 from mddatanet.format.schema import (
+    AnalysisSummary,
+    CoordinateStorage,
     Metadata,
     Provenance,
     RunRecord,
+    SamplingMetadata,
     SimulationMetadata,
     SourceMetadata,
     SystemMetadata,
+    TrajectorySummary,
 )
 from mddatanet.io.checksums import write_checksums
 from mddatanet.io.loaders import load_universe
@@ -37,13 +41,16 @@ from mddatanet.io.zarr_store import (
 )
 from mddatanet.utils.errors import PackageError
 from mddatanet.utils.paths import ensure_can_write, is_package_zip, package_stem
+from mddatanet.utils.yaml import write_yaml
 
 
 @dataclass(frozen=True)
 class _RunSpec:
     run_id: str
+    trajectory_id: str
     trajectory: Path | None
     frame_range: range
+    source_frame_count: int
     package_start: int
     package_stop: int
     atom_count: int
@@ -77,6 +84,19 @@ def convert_package(
     stop: int | None = None,
     chunk_size: int = DEFAULT_POSITION_FRAME_CHUNK,
     store_positions: bool = False,
+    data_mode: str = "hybrid",
+    storage_profile: str = "compressed",
+    no_coordinates: bool = False,
+    coordinate_dtype: str = "float32",
+    compression: str = "zstd",
+    chunk_frames: int = 100,
+    chunk_atoms: int = 1000,
+    coordinate_precision: float | None = None,
+    coordinates_url: str | None = None,
+    coordinates_sha256: str | None = None,
+    topology_url: str | None = None,
+    topology_sha256: str | None = None,
+    trajectory_id: Sequence[str] | None = None,
     overwrite: bool = False,
     command: str | None = None,
 ) -> Path:
@@ -87,9 +107,30 @@ def convert_package(
         raise PackageError("stride must be >= 1")
     if chunk_size < 1:
         raise PackageError("chunk_size must be >= 1")
+    if data_mode not in {"trajectory", "hybrid", "features-only"}:
+        raise PackageError("data_mode must be trajectory, hybrid, or features-only")
+    if storage_profile not in {"compressed", "full", "linked"}:
+        raise PackageError("storage_profile must be compressed, full, or linked")
+    if coordinate_dtype not in {"float32", "float64"}:
+        raise PackageError("coordinate_dtype must be float32 or float64")
+    if compression not in {"zstd", "blosc-zstd", "none"}:
+        raise PackageError("compression must be zstd, blosc-zstd, or none")
+    if chunk_frames < 1 or chunk_atoms < 1:
+        raise PackageError("chunk_frames and chunk_atoms must be >= 1")
+    include_coordinates = (
+        data_mode != "features-only"
+        and storage_profile != "linked"
+        and not no_coordinates
+    )
+    if storage_profile == "linked" and (not coordinates_url or not coordinates_sha256):
+        raise PackageError(
+            "linked storage requires --coordinates-url and --coordinates-sha256.",
+            suggestion="Provide external coordinate storage metadata or use --storage-profile compressed.",
+        )
     topology = Path(topology)
     trajectories = _normalize_trajectories(trajectory)
     run_ids = _resolve_run_ids(trajectories, run_id)
+    trajectory_ids = _resolve_trajectory_ids(trajectories, trajectory_id)
     coordinates = Path(coordinates) if coordinates is not None else None
     _validate_source_paths(topology=topology, coordinates=coordinates, trajectories=trajectories)
 
@@ -98,11 +139,13 @@ def convert_package(
         coordinates=coordinates,
         trajectories=trajectories,
         run_ids=run_ids,
+        trajectory_ids=trajectory_ids,
         start=start,
         stop=stop,
         stride=stride,
     )
     total_frames = sum(len(spec.frame_range) for spec in run_specs)
+    source_frame_count = sum(spec.source_frame_count for spec in run_specs)
     if total_frames == 0:
         raise PackageError("Frame slice selected zero frames.")
 
@@ -122,6 +165,36 @@ def convert_package(
             mddatanet_version=__version__,
             dataset_name=name,
             description=description,
+            data_mode=data_mode,
+            storage_profile=storage_profile,
+            coordinate_storage=CoordinateStorage(
+                included=include_coordinates,
+                external=storage_profile == "linked",
+                format="zarr" if include_coordinates else None,
+                path="dataset.zarr/trajectory/positions" if include_coordinates else None,
+                dtype=coordinate_dtype if include_coordinates else None,
+                compression=compression if include_coordinates else None,
+                chunk_frames=chunk_frames if include_coordinates else None,
+                chunk_atoms=chunk_atoms if include_coordinates else None,
+                chunking=[chunk_frames, min(chunk_atoms, int(first_universe.atoms.n_atoms)), 3]
+                if include_coordinates
+                else None,
+                quantized=coordinate_precision is not None,
+                coordinate_precision_angstrom=coordinate_precision,
+                download_file="download.yaml" if storage_profile == "linked" else None,
+            ),
+            sampling=SamplingMetadata(
+                stride=stride,
+                source_frame_count=source_frame_count,
+                stored_frame_count=total_frames,
+            ),
+            trajectory_summary=TrajectorySummary(
+                num_trajectories=len(run_specs),
+                num_runs=len(run_specs),
+                total_frames=total_frames,
+                frames_per_trajectory=[len(spec.frame_range) for spec in run_specs],
+            ),
+            analysis_summary=AnalysisSummary(),
             system=SystemMetadata(
                 system_type=inferred_system_type,
                 num_atoms=int(first_universe.atoms.n_atoms),
@@ -200,7 +273,14 @@ def convert_package(
             frame_start=start,
             frame_stop=stop,
             frame_stride=stride,
-            stored_positions=store_positions,
+            stored_positions=include_coordinates or store_positions,
+            data_mode=data_mode,
+            storage_profile=storage_profile,
+            coordinate_dtype=coordinate_dtype,
+            compression=compression,
+            chunk_frames=chunk_frames,
+            chunk_atoms=chunk_atoms,
+            coordinate_precision_angstrom=coordinate_precision,
         )
 
         _write_topology_arrays(zarr_root, first_universe)
@@ -209,10 +289,25 @@ def convert_package(
             topology=topology,
             coordinates=coordinates,
             run_specs=run_specs,
-            chunk_size=chunk_size,
-            store_positions=store_positions,
+            chunk_size=chunk_frames,
+            store_positions=include_coordinates or store_positions,
+            coordinate_dtype=coordinate_dtype,
+            compression=compression,
+            chunk_atoms=chunk_atoms,
+            coordinate_precision=coordinate_precision,
         )
+        if storage_profile == "linked":
+            _write_download_yaml(
+                working_dir,
+                coordinates_url=coordinates_url,
+                coordinates_sha256=coordinates_sha256,
+                topology_url=topology_url,
+                topology_sha256=topology_sha256,
+                topology=topology,
+            )
         write_index_names(zarr_root, feature_names=[], event_names=[])
+        create_string_array(zarr_root["index"], "trajectory_names", [spec.trajectory_id for spec in run_specs], overwrite=True)
+        create_string_array(zarr_root["index"], "run_names", [spec.run_id for spec in run_specs], overwrite=True)
         provenance.conversion_time_seconds = time.perf_counter() - started
         write_metadata(working_dir, metadata)
         write_provenance(working_dir, provenance)
@@ -264,6 +359,27 @@ def _resolve_run_ids(trajectories: list[Path], run_id: Sequence[str] | None) -> 
     return derived
 
 
+def _resolve_trajectory_ids(
+    trajectories: list[Path],
+    trajectory_id: Sequence[str] | None,
+) -> list[str]:
+    if trajectory_id is not None and len(trajectory_id) != len(trajectories):
+        raise PackageError(
+            "--trajectory-id count must match --trajectory count.",
+            suggestion="Pass one --trajectory-id for each --trajectory, or omit it.",
+        )
+    if trajectory_id is not None:
+        if len(set(trajectory_id)) != len(trajectory_id):
+            raise PackageError("trajectory IDs must be unique.")
+        return list(trajectory_id)
+    if not trajectories:
+        return ["trajectory_0"]
+    derived = [path.stem or f"trajectory_{index}" for index, path in enumerate(trajectories)]
+    if len(set(derived)) != len(derived):
+        derived = [f"{path.stem or 'trajectory'}_{index}" for index, path in enumerate(trajectories)]
+    return derived
+
+
 def _validate_source_paths(*, topology: Path, coordinates: Path | None, trajectories: list[Path]) -> None:
     paths: list[tuple[str, Path | None]] = [("topology", topology), ("coordinates", coordinates)]
     paths.extend((f"trajectory[{index}]", path) for index, path in enumerate(trajectories))
@@ -278,6 +394,7 @@ def _build_run_specs(
     coordinates: Path | None,
     trajectories: list[Path],
     run_ids: list[str],
+    trajectory_ids: list[str],
     start: int | None,
     stop: int | None,
     stride: int,
@@ -310,8 +427,10 @@ def _build_run_specs(
         specs.append(
             _RunSpec(
                 run_id=run_ids[index],
+                trajectory_id=trajectory_ids[index],
                 trajectory=trajectory,
                 frame_range=frame_range,
+                source_frame_count=len(universe.trajectory),
                 package_start=package_start,
                 package_stop=package_stop,
                 atom_count=atom_count,
@@ -336,16 +455,37 @@ def _frame_range(total_frames: int, *, start: int | None, stop: int | None, stri
 
 
 def _write_topology_arrays(zarr_root, universe) -> None:
-    arrays = zarr_root["arrays"]
-    create_string_array(arrays, "atom_names", list(universe.atoms.names), overwrite=True)
+    topology = zarr_root["topology"]
+    n_atoms = int(universe.atoms.n_atoms)
+    create_string_array(topology, "atom_names", list(universe.atoms.names), overwrite=True)
+    create_string_array(topology, "atom_types", _atom_attr(universe.atoms, "types", list(universe.atoms.names)), overwrite=True)
+    create_string_array(topology, "residue_names", list(universe.atoms.resnames), overwrite=True)
+    create_string_array(topology, "chain_ids", _chain_ids(universe), overwrite=True)
     create_array(
-        arrays,
+        topology,
         "residue_ids",
-        shape=(int(universe.atoms.n_atoms),),
+        shape=(n_atoms,),
         dtype="int64",
         overwrite=True,
     )[:] = list(universe.atoms.resids)
-    create_string_array(arrays, "residue_names", list(universe.atoms.resnames), overwrite=True)
+    create_array(topology, "masses", shape=(n_atoms,), dtype="float32", overwrite=True)[:] = _float_attr(
+        universe.atoms, "masses", n_atoms
+    )
+    create_array(topology, "charges", shape=(n_atoms,), dtype="float32", overwrite=True)[:] = _float_attr(
+        universe.atoms, "charges", n_atoms
+    )
+    bonds = getattr(universe, "bonds", [])
+    bond_indices = [bond.indices for bond in bonds] if bonds else []
+    bond_array = create_array(
+        topology,
+        "bonds",
+        shape=(len(bond_indices), 2),
+        dtype="int64",
+        chunks=(max(len(bond_indices), 1), 2),
+        overwrite=True,
+    )
+    if bond_indices:
+        bond_array[:] = bond_indices
 
 
 def _write_frame_arrays(
@@ -356,15 +496,19 @@ def _write_frame_arrays(
     run_specs: list[_RunSpec],
     chunk_size: int,
     store_positions: bool,
+    coordinate_dtype: str,
+    compression: str,
+    chunk_atoms: int,
+    coordinate_precision: float | None,
 ) -> None:
     import numpy as np
     from rich.progress import Progress, TextColumn, BarColumn, TaskProgressColumn, TimeRemainingColumn
 
-    arrays = zarr_root["arrays"]
+    trajectory = zarr_root["trajectory"]
     n_frames = sum(len(spec.frame_range) for spec in run_specs)
     atom_count = run_specs[0].atom_count
     frame_indices = create_array(
-        arrays,
+        trajectory,
         "frame_indices",
         shape=(n_frames,),
         dtype="int64",
@@ -372,51 +516,51 @@ def _write_frame_arrays(
         overwrite=True,
     )
     source_frame_indices = create_array(
-        arrays,
+        trajectory,
         "source_frame_indices",
         shape=(n_frames,),
         dtype="int64",
         chunks=(min(max(n_frames, 1), 65_536),),
         overwrite=True,
     )
-    trajectory_ids = create_array(
-        arrays,
-        "trajectory_ids",
-        shape=(n_frames,),
-        dtype="int64",
-        chunks=(min(max(n_frames, 1), 65_536),),
-        overwrite=True,
-    )
     frame_times = create_array(
-        arrays,
+        trajectory,
         "frame_times",
         shape=(n_frames,),
         dtype="float64",
         chunks=(min(max(n_frames, 1), 65_536),),
         overwrite=True,
     )
-    dimensions = create_array(
-        arrays,
-        "dimensions",
+    box_vectors = create_array(
+        trajectory,
+        "box_vectors",
         shape=(n_frames, 6),
         dtype="float32",
         chunks=(min(max(n_frames, 1), 65_536), 6),
         overwrite=True,
     )
     create_string_array(
-        arrays,
+        trajectory,
         "run_ids",
         [spec.run_id for spec in run_specs for _ in spec.frame_range],
         overwrite=True,
     )
+    create_string_array(
+        trajectory,
+        "trajectory_ids",
+        [spec.trajectory_id for spec in run_specs for _ in spec.frame_range],
+        overwrite=True,
+    )
     positions = None
     if store_positions:
+        atom_chunk = min(max(chunk_atoms, 1), atom_count)
         positions = create_array(
-            arrays,
+            trajectory,
             "positions",
             shape=(n_frames, atom_count, 3),
-            dtype="float32",
-            chunks=(min(chunk_size, max(n_frames, 1)), atom_count, 3),
+            dtype=coordinate_dtype,
+            chunks=(min(chunk_size, max(n_frames, 1)), atom_chunk, 3),
+            compression=compression,
             overwrite=True,
         )
 
@@ -428,7 +572,7 @@ def _write_frame_arrays(
         transient=True,
     ) as progress:
         task = progress.add_task("Converting frames...", total=n_frames)
-        for trajectory_id, spec in enumerate(run_specs):
+        for spec in run_specs:
             universe = load_universe(topology, coordinates=coordinates, trajectory=spec.trajectory)
             for out_start in range(spec.package_start, spec.package_stop, chunk_size):
                 out_stop = min(out_start + chunk_size, spec.package_stop)
@@ -439,7 +583,7 @@ def _write_frame_arrays(
                 chunk_times = np.empty((len(chunk_frames),), dtype="float64")
                 chunk_dimensions = np.empty((len(chunk_frames), 6), dtype="float32")
                 chunk_positions = (
-                    np.empty((len(chunk_frames), atom_count, 3), dtype="float32")
+                    np.empty((len(chunk_frames), atom_count, 3), dtype=coordinate_dtype)
                     if positions is not None
                     else None
                 )
@@ -448,12 +592,14 @@ def _write_frame_arrays(
                     chunk_times[offset] = _frame_time(ts, frame_index)
                     chunk_dimensions[offset] = getattr(ts, "dimensions", np.zeros(6, dtype="float32"))
                     if chunk_positions is not None:
-                        chunk_positions[offset] = universe.atoms.positions.astype("float32", copy=False)
-                frame_indices[out_start:out_stop] = chunk_indices
+                        values = universe.atoms.positions.astype(coordinate_dtype, copy=False)
+                        if coordinate_precision is not None:
+                            values = (np.round(values / coordinate_precision) * coordinate_precision).astype(coordinate_dtype)
+                        chunk_positions[offset] = values
+                frame_indices[out_start:out_stop] = np.arange(out_start, out_stop, dtype="int64")
                 source_frame_indices[out_start:out_stop] = chunk_indices
-                trajectory_ids[out_start:out_stop] = np.full((len(chunk_frames),), trajectory_id, dtype="int64")
                 frame_times[out_start:out_stop] = chunk_times
-                dimensions[out_start:out_stop] = chunk_dimensions
+                box_vectors[out_start:out_stop] = chunk_dimensions
                 if positions is not None and chunk_positions is not None:
                     positions[out_start:out_stop, :, :] = chunk_positions
 
@@ -467,6 +613,66 @@ def _infer_system_type(universe) -> str:
     except Exception:
         pass
     return "unknown"
+
+
+def _atom_attr(atoms, name: str, default) -> list[str]:
+    try:
+        values = getattr(atoms, name)
+        return [str(value) for value in values]
+    except Exception:
+        return [str(value) for value in default]
+
+
+def _float_attr(atoms, name: str, n_atoms: int) -> list[float]:
+    try:
+        values = getattr(atoms, name)
+        return [float(value) for value in values]
+    except Exception:
+        return [0.0] * n_atoms
+
+
+def _chain_ids(universe) -> list[str]:
+    for attr in ("chainIDs", "segids"):
+        try:
+            values = getattr(universe.atoms, attr)
+            return [str(value) for value in values]
+        except Exception:
+            continue
+    return [""] * int(universe.atoms.n_atoms)
+
+
+def _write_download_yaml(
+    package_dir: Path,
+    *,
+    coordinates_url: str | None,
+    coordinates_sha256: str | None,
+    topology_url: str | None,
+    topology_sha256: str | None,
+    topology: Path,
+) -> None:
+    data = {
+        "coordinates": {
+            "url": coordinates_url,
+            "sha256": coordinates_sha256,
+            "format": _format_from_url(coordinates_url),
+            "required_for_training": True,
+        },
+        "topology": {
+            "url": topology_url,
+            "sha256": topology_sha256,
+            "format": _format_from_url(topology_url) or topology.suffix.lower().lstrip("."),
+        },
+    }
+    write_yaml(data, package_dir / "download.yaml")
+
+
+def _format_from_url(url: str | None) -> str | None:
+    if not url:
+        return None
+    suffix = Path(url.split("?", 1)[0]).suffix.lower().lstrip(".")
+    if suffix == "zip" and ".zarr" in url:
+        return "zarr"
+    return suffix or None
 
 
 def _has_periodic_box(ts) -> bool:

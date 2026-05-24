@@ -7,6 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
+from mddatanet.io.layout import run_ids_array
 from mddatanet.io.zarr_store import open_zarr_group
 
 
@@ -40,7 +41,7 @@ def iter_windows(
         # label_name could be "my_event/event_future_500"
         label_arr = zarr_root[f"labels/{label_name}"]
         labels.append(label_arr)
-        mask_path = f"labels/{label_name}_valid_mask"
+        mask_path = f"labels/{label_name}_valid"
         try:
             label_mask = zarr_root[mask_path]
         except KeyError:
@@ -48,7 +49,8 @@ def iter_windows(
 
     # We also need to respect run boundaries.
     # We should not create windows that cross runs.
-    run_ids = zarr_root["arrays/run_ids"][:]
+    stored_run_ids = run_ids_array(zarr_root)
+    run_ids = stored_run_ids[:] if stored_run_ids is not None else np.array(["__single_run__"] * num_frames)
     
     for i in range(0, num_frames - window_size + 1, stride):
         # Check if run_id is the same across the window

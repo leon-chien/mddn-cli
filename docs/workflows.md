@@ -10,7 +10,7 @@ mddatanet convert \
   --system-type protein_ligand \
   --out ligand_raw.mddatanet
 
-mddatanet label \
+mddatanet analyze \
   --input ligand_raw.mddatanet \
   --preset ligand_unbinding \
   --ligand "resname LIG" \
@@ -21,6 +21,9 @@ mddatanet split --input ligand_labeled.mddatanet --strategy temporal --gap 100 -
 mddatanet validate ligand_ready.mddatanet.zip
 mddatanet inspect ligand_ready.mddatanet.zip --features --labels --splits
 ```
+
+`analyze` is the high-level preset path. It resolves the preset, computes
+required features, writes frame labels, and refreshes package metadata.
 
 ## Custom Features And Events
 
@@ -68,6 +71,31 @@ mddatanet convert \
   --out replicate_dataset.mddatanet
 
 mddatanet split --input replicate_dataset.mddatanet --strategy trajectory --out replicate_ready.mddatanet
+```
+
+## Linked Coordinate Package
+
+```bash
+mddatanet convert \
+  --topology system.pdb \
+  --trajectory traj.xtc \
+  --name huge_dataset \
+  --storage-profile linked \
+  --coordinates-url https://storage.example/huge_dataset.coordinates.zarr.zip \
+  --coordinates-sha256 abc123 \
+  --out huge_dataset.labels.mddatanet.zip
+```
+
+Linked packages keep labels, features, metadata, and checksums in the
+`.mddatanet.zip` while coordinates live in external storage.
+
+## Split Coordinates For Hub-Scale Sharing
+
+```bash
+mddatanet split-package \
+  --input ready.mddatanet.zip \
+  --out-labels dataset.labels.mddatanet.zip \
+  --out-coordinates dataset.coordinates.zarr.zip
 ```
 
 ## Hub Manifest Export

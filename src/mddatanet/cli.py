@@ -22,12 +22,14 @@ from mddatanet.format.validation import (
 from mddatanet.hub import export_manifest
 from mddatanet.io.checksums import write_checksums
 from mddatanet.io.package import pack_package, unpack_package
+from mddatanet.io.split_package import split_package_for_hub
 from mddatanet.io.workspace import PackageWorkspace
 from mddatanet.labels.service import label_package
 from mddatanet.presets.registry import registry as preset_registry
 from mddatanet.splits.service import split_package
 from mddatanet.utils.errors import MDDataNetError
 from mddatanet.utils.logging import console, print_error, print_step, print_success
+from mddatanet.utils.yaml import read_yaml
 
 app = typer.Typer(
     name="mddatanet",
@@ -49,11 +51,24 @@ def convert(
     start: int | None = typer.Option(None, "--start"),
     stop: int | None = typer.Option(None, "--stop"),
     chunk_size: int = typer.Option(100, "--chunk-size", help="Processing chunk size (frames)."),
+    data_mode: str = typer.Option("hybrid", "--data-mode", help="hybrid, trajectory, or features-only."),
+    storage_profile: str = typer.Option("compressed", "--storage-profile", help="compressed, full, or linked."),
+    no_coordinates: bool = typer.Option(False, "--no-coordinates", help="Do not embed trajectory coordinates."),
+    coordinate_dtype: str = typer.Option("float32", "--coordinate-dtype", help="float32 or float64."),
+    compression: str = typer.Option("zstd", "--compression", help="zstd, blosc-zstd, or none."),
+    chunk_frames: int = typer.Option(100, "--chunk-frames", help="Coordinate chunk size in frames."),
+    chunk_atoms: int = typer.Option(1000, "--chunk-atoms", help="Coordinate chunk size in atoms."),
+    coordinate_precision: float | None = typer.Option(None, "--coordinate-precision", help="Round coordinates to this Angstrom precision."),
+    coordinates_url: str | None = typer.Option(None, "--coordinates-url", help="External coordinate URL for linked storage."),
+    coordinates_sha256: str | None = typer.Option(None, "--coordinates-sha256", help="External coordinate SHA256 for linked storage."),
+    topology_url: str | None = typer.Option(None, "--topology-url", help="External topology URL for linked storage."),
+    topology_sha256: str | None = typer.Option(None, "--topology-sha256", help="External topology SHA256 for linked storage."),
     store_positions: bool = typer.Option(False, "--store-positions/--no-store-positions"),
     license: str = typer.Option("unknown", "--license", help="Dataset license."),
     source_url: str | None = typer.Option(None, "--source-url", help="Original source URL."),
     citation: str | None = typer.Option(None, "--citation", help="Citation or DOI."),
     run_id: list[str] | None = typer.Option(None, "--run-id", help="Run ID. Repeat once for each --trajectory."),
+    trajectory_id: list[str] | None = typer.Option(None, "--trajectory-id", help="Trajectory ID. Repeat once for each --trajectory."),
     simulation_engine: str | None = typer.Option(None, "--simulation-engine", help="MD engine, e.g. NAMD or GROMACS."),
     force_field: str | None = typer.Option(None, "--force-field", help="Force field name."),
     solvent: str | None = typer.Option(None, "--solvent", help="Solvent description."),
@@ -87,6 +102,19 @@ def convert(
             stop=stop,
             chunk_size=chunk_size,
             store_positions=store_positions,
+            data_mode=data_mode,
+            storage_profile=storage_profile,
+            no_coordinates=no_coordinates,
+            coordinate_dtype=coordinate_dtype,
+            compression=compression,
+            chunk_frames=chunk_frames,
+            chunk_atoms=chunk_atoms,
+            coordinate_precision=coordinate_precision,
+            coordinates_url=coordinates_url,
+            coordinates_sha256=coordinates_sha256,
+            topology_url=topology_url,
+            topology_sha256=topology_sha256,
+            trajectory_id=trajectory_id,
             license=license,
             source_url=source_url,
             citation=citation,
@@ -95,7 +123,7 @@ def convert(
         )
         print_step(4, 4, "Package written.")
         print_success(str(result))
-        _next(f"Run `mddatanet featurize --input {result} --features features.yaml --out features.mddatanet` or use `mddatanet label --preset ...` if the preset can compute missing features.")
+        _next(f"Run `mddatanet analyze --input {result} --preset ligand_unbinding --ligand 'resname LIG' --pocket protein --out labeled.mddatanet`.")
     except MDDataNetError as exc:
         _fail(exc.display_message())
 
@@ -162,6 +190,53 @@ def label(
             command=_command_string(),
         )
         print_step(4, 4, "Labels written.")
+        print_success(str(result))
+        _next(f"Run `mddatanet split --input {result} --strategy temporal --out ready.mddatanet`.")
+    except MDDataNetError as exc:
+        _fail(exc.display_message())
+
+
+@app.command()
+def analyze(
+    input_path: Path = typer.Option(..., "--input", help="Input package."),
+    out: Path = typer.Option(..., "--out", help="Output package."),
+    preset: str | None = typer.Option(None, "--preset", help="Built-in preset name."),
+    preset_yaml: Path | None = typer.Option(None, "--preset-yaml", help="User preset YAML."),
+    param: list[str] | None = typer.Option(None, "--param", help="Preset parameter override key=value."),
+    ligand: str | None = typer.Option(None, "--ligand", help="Ligand atom selection."),
+    pocket: str | None = typer.Option(None, "--pocket", help="Pocket/protein atom selection."),
+    selection_a: str | None = typer.Option(None, "--selection-a", help="Generic selection A."),
+    selection_b: str | None = typer.Option(None, "--selection-b", help="Generic selection B."),
+    reference: Path | None = typer.Option(None, "--reference", help="Reference structure."),
+    horizon_frames: int | None = typer.Option(None, "--horizon-frames", help="Override preset horizon."),
+    overwrite: bool = typer.Option(False, "--overwrite"),
+    overwrite_feature: bool = typer.Option(False, "--overwrite-feature", help="Reserved for conflicting feature configs."),
+) -> None:
+    """Run a built-in or user preset analysis in one step."""
+
+    del overwrite_feature
+    overrides = _parse_params(param or [])
+    if horizon_frames is not None:
+        overrides["horizon_frames"] = horizon_frames
+    try:
+        print_step(1, 4, "Resolving preset analysis...")
+        result = label_package(
+            input_path=input_path,
+            out=out,
+            preset=preset,
+            preset_yaml=preset_yaml,
+            preset_args={
+                "reference": str(reference) if reference is not None else None,
+                "ligand": ligand,
+                "pocket": pocket,
+                "selection_a": selection_a,
+                "selection_b": selection_b,
+            },
+            param_overrides=overrides,
+            overwrite=overwrite,
+            command=_command_string(),
+        )
+        print_step(4, 4, "Analysis labels written.")
         print_success(str(result))
         _next(f"Run `mddatanet split --input {result} --strategy temporal --out ready.mddatanet`.")
     except MDDataNetError as exc:
@@ -281,6 +356,28 @@ def unpack(
         _fail(exc.display_message())
 
 
+@app.command("split-package")
+def split_package_command(
+    input_path: Path = typer.Option(..., "--input", help="Input trajectory-first package."),
+    out_labels: Path = typer.Option(..., "--out-labels", help="Output labels .mddatanet.zip."),
+    out_coordinates: Path = typer.Option(..., "--out-coordinates", help="Output coordinates .zarr.zip."),
+    overwrite: bool = typer.Option(False, "--overwrite"),
+) -> None:
+    """Split labels/metadata from coordinates for Hub-scale distribution."""
+
+    try:
+        labels_path, coordinates_path = split_package_for_hub(
+            input_path=input_path,
+            out_labels=out_labels,
+            out_coordinates=out_coordinates,
+            overwrite=overwrite,
+        )
+        print_success(f"{labels_path} and {coordinates_path}")
+        _next(f"Share {labels_path} for metadata/labels and keep {coordinates_path} available for coordinate training.")
+    except MDDataNetError as exc:
+        _fail(exc.display_message())
+
+
 @app.command()
 def card(
     input_path: Path = typer.Option(..., "--input", help="Input package."),
@@ -367,7 +464,22 @@ def presets_show(name: str) -> None:
     """Show exact preset definition."""
 
     try:
-        console.print_json(data=preset_registry.get(name))
+        import yaml
+
+        console.print(yaml.safe_dump(preset_registry.get(name), sort_keys=False))
+    except MDDataNetError as exc:
+        _fail(exc.display_message())
+
+
+@presets_app.command("validate-yaml")
+def presets_validate_yaml(preset_file: Path) -> None:
+    """Validate a user preset YAML file."""
+
+    try:
+        from mddatanet.presets.resolver import validate_preset_definition
+
+        validate_preset_definition(read_yaml(preset_file))
+        print_success(f"{preset_file} is a valid MDDataNet preset YAML.")
     except MDDataNetError as exc:
         _fail(exc.display_message())
 

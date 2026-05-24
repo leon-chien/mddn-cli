@@ -67,19 +67,37 @@ def create_package_directory(
     output_dir.mkdir(parents=True)
     zarr_root = create_zarr_store(output_dir / "dataset.zarr", overwrite=True)
     create_numeric_vector(
-        zarr_root["arrays"],
+        zarr_root["trajectory"],
         "frame_indices",
         list(range(metadata.system.num_frames)),
         dtype="int64",
         overwrite=True,
     )
     create_numeric_vector(
-        zarr_root["arrays"],
+        zarr_root["trajectory"],
         "frame_times",
         [0.0] * metadata.system.num_frames,
         dtype="float64",
         overwrite=True,
     )
+    create_numeric_vector(
+        zarr_root["trajectory"],
+        "source_frame_indices",
+        list(range(metadata.system.num_frames)),
+        dtype="int64",
+        overwrite=True,
+    )
+    create_string_array(zarr_root["trajectory"], "trajectory_ids", ["trajectory_0"] * metadata.system.num_frames)
+    create_string_array(zarr_root["trajectory"], "run_ids", ["run_0"] * metadata.system.num_frames)
+    create_numeric_vector(
+        zarr_root["topology"],
+        "residue_ids",
+        [0] * metadata.system.num_atoms,
+        dtype="int64",
+        overwrite=True,
+    )
+    create_string_array(zarr_root["topology"], "atom_names", [""] * metadata.system.num_atoms)
+    create_string_array(zarr_root["topology"], "residue_names", [""] * metadata.system.num_atoms)
     create_string_array(zarr_root["index"], "feature_names", metadata.features.feature_names)
     create_string_array(zarr_root["index"], "event_names", metadata.labels.event_names)
     write_metadata(output_dir, metadata)

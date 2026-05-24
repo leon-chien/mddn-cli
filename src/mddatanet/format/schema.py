@@ -80,12 +80,52 @@ class SplitSummary(StrictModel):
     gap: int | None = None
 
 
+class CoordinateStorage(StrictModel):
+    included: bool = False
+    external: bool = False
+    format: str | None = None
+    path: str | None = None
+    dtype: str | None = None
+    compression: str | None = None
+    chunk_frames: int | None = None
+    chunk_atoms: int | None = None
+    chunking: list[int] | None = None
+    quantized: bool = False
+    coordinate_precision_angstrom: float | None = None
+    download_file: str | None = None
+
+
+class SamplingMetadata(StrictModel):
+    stride: int = 1
+    source_frame_count: int = 0
+    stored_frame_count: int = 0
+
+
+class TrajectorySummary(StrictModel):
+    num_trajectories: int = 1
+    num_runs: int = 1
+    total_frames: int = 0
+    frames_per_trajectory: list[int] = Field(default_factory=list)
+
+
+class AnalysisSummary(StrictModel):
+    num_features: int = 0
+    num_events: int = 0
+    presets_used: list[str] = Field(default_factory=list)
+
+
 class Metadata(StrictModel):
     mddatanet_version: str = "0.1.0"
     format_version: str = "1.0"
     dataset_name: str
     description: str | None = None
     created_at: str = Field(default_factory=utc_now_iso)
+    data_mode: Literal["trajectory", "hybrid", "features-only"] = "hybrid"
+    storage_profile: Literal["compressed", "full", "linked"] = "compressed"
+    coordinate_storage: CoordinateStorage = Field(default_factory=CoordinateStorage)
+    sampling: SamplingMetadata = Field(default_factory=SamplingMetadata)
+    trajectory_summary: TrajectorySummary = Field(default_factory=TrajectorySummary)
+    analysis_summary: AnalysisSummary = Field(default_factory=AnalysisSummary)
     system: SystemMetadata
     source: SourceMetadata = Field(default_factory=SourceMetadata)
     simulation: SimulationMetadata = Field(default_factory=SimulationMetadata)
@@ -148,6 +188,13 @@ class Provenance(StrictModel):
     frame_stop: int | None = None
     frame_stride: int | None = None
     stored_positions: bool = False
+    data_mode: str | None = None
+    storage_profile: str | None = None
+    coordinate_dtype: str | None = None
+    compression: str | None = None
+    chunk_frames: int | None = None
+    chunk_atoms: int | None = None
+    coordinate_precision_angstrom: float | None = None
     conversion_time_seconds: float | None = None
     feature_config_checksum: str | None = None
     event_config_checksum: str | None = None
@@ -163,6 +210,7 @@ FeatureType = Literal[
     "radius_of_gyration",
     "native_contact_fraction",
     "contact_map",
+    "center_of_geometry_distance",
 ]
 
 
@@ -188,7 +236,13 @@ class FeatureDefinition(StrictModel):
 
     @model_validator(mode="after")
     def validate_required_fields(self) -> "FeatureDefinition":
-        if self.type in {"distance", "min_distance", "contact", "contact_count"}:
+        if self.type in {
+            "distance",
+            "min_distance",
+            "contact",
+            "contact_count",
+            "center_of_geometry_distance",
+        }:
             if not self.selection_a or not self.selection_b:
                 raise ValueError(f"{self.type} requires selection_a and selection_b")
         if self.type == "dihedral" and (not self.atoms or len(self.atoms) != 4):

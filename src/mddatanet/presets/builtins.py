@@ -56,7 +56,7 @@ BUILTIN_PRESETS: list[dict] = [
     },
     {
         "name": "salt_bridge_breaking",
-        "category": "Interactions",
+        "category": "Interaction",
         "description": "Detect salt bridge breaking with a distance threshold.",
         "required_args": ["selection_a", "selection_b"],
         "default_params": {"distance_threshold": 5.0, "horizon_frames": 500},
@@ -81,7 +81,7 @@ BUILTIN_PRESETS: list[dict] = [
     },
     {
         "name": "salt_bridge_formation",
-        "category": "Interactions",
+        "category": "Interaction",
         "description": "Detect salt bridge formation with a distance threshold.",
         "required_args": ["selection_a", "selection_b"],
         "default_params": {"distance_threshold": 4.0, "horizon_frames": 500},
@@ -100,6 +100,54 @@ BUILTIN_PRESETS: list[dict] = [
             "type": "feature_threshold",
             "feature": "salt_bridge_distance",
             "operator": "less_than",
+            "threshold": "{distance_threshold}",
+            "horizon_frames": "{horizon_frames}",
+        },
+    },
+    {
+        "name": "dimerization",
+        "category": "Interaction",
+        "description": "Detect two molecular groups coming together using minimum distance.",
+        "required_args": ["selection_a", "selection_b"],
+        "default_params": {"distance_threshold": 6.0, "horizon_frames": 500},
+        "features": [
+            {
+                "name": "selection_min_distance",
+                "type": "min_distance",
+                "selection_a": "{selection_a}",
+                "selection_b": "{selection_b}",
+                "units": "angstrom",
+            }
+        ],
+        "event": {
+            "name": "dimerization",
+            "type": "feature_threshold",
+            "feature": "selection_min_distance",
+            "operator": "less_than",
+            "threshold": "{distance_threshold}",
+            "horizon_frames": "{horizon_frames}",
+        },
+    },
+    {
+        "name": "dissociation",
+        "category": "Interaction",
+        "description": "Detect two molecular groups separating using minimum distance.",
+        "required_args": ["selection_a", "selection_b"],
+        "default_params": {"distance_threshold": 15.0, "horizon_frames": 500},
+        "features": [
+            {
+                "name": "selection_min_distance",
+                "type": "min_distance",
+                "selection_a": "{selection_a}",
+                "selection_b": "{selection_b}",
+                "units": "angstrom",
+            }
+        ],
+        "event": {
+            "name": "dissociation",
+            "type": "feature_threshold",
+            "feature": "selection_min_distance",
+            "operator": "greater_than",
             "threshold": "{distance_threshold}",
             "horizon_frames": "{horizon_frames}",
         },
@@ -156,7 +204,7 @@ BUILTIN_PRESETS: list[dict] = [
     },
     {
         "name": "hydrogen_bond_breaking",
-        "category": "Interactions",
+        "category": "Interaction",
         "description": "Detect hydrogen bond breaking with a distance threshold.",
         "required_args": ["selection_a", "selection_b"],
         "default_params": {"distance_threshold": 3.5, "horizon_frames": 500},
@@ -180,7 +228,7 @@ BUILTIN_PRESETS: list[dict] = [
     },
     {
         "name": "hydrogen_bond_formation",
-        "category": "Interactions",
+        "category": "Interaction",
         "description": "Detect hydrogen bond formation with a distance threshold.",
         "required_args": ["selection_a", "selection_b"],
         "default_params": {"distance_threshold": 3.0, "horizon_frames": 500},
@@ -199,6 +247,30 @@ BUILTIN_PRESETS: list[dict] = [
             "feature": "hbond_distance",
             "operator": "less_than",
             "threshold": "{distance_threshold}",
+            "horizon_frames": "{horizon_frames}",
+        },
+    },
+    {
+        "name": "native_contact_loss",
+        "category": "Protein",
+        "description": "Detect loss of native contacts relative to a reference structure.",
+        "required_args": ["reference"],
+        "default_params": {"native_contact_threshold": 0.4, "native_contact_cutoff": 8.0, "horizon_frames": 500},
+        "features": [
+            {
+                "name": "native_contact_fraction",
+                "type": "native_contact_fraction",
+                "selection": "protein and name CA",
+                "reference": "{reference}",
+                "threshold_angstrom": "{native_contact_cutoff}",
+            }
+        ],
+        "event": {
+            "name": "native_contact_loss",
+            "type": "feature_threshold",
+            "feature": "native_contact_fraction",
+            "operator": "less_than",
+            "threshold": "{native_contact_threshold}",
             "horizon_frames": "{horizon_frames}",
         },
     },
@@ -276,4 +348,3 @@ BUILTIN_PRESETS: list[dict] = [
         },
     },
 ]
-

@@ -37,8 +37,8 @@ def test_multirun_convert_stores_run_arrays_and_trajectory_split(tmp_path):
         ("run_a", 0, 2),
         ("run_b", 2, 4),
     ]
-    assert root["arrays"]["run_ids"][:].tolist() == ["run_a", "run_a", "run_b", "run_b"]
-    assert root["arrays"]["source_frame_indices"][:].tolist() == [0, 1, 0, 1]
+    assert root["trajectory"]["run_ids"][:].tolist() == ["run_a", "run_a", "run_b", "run_b"]
+    assert root["trajectory"]["source_frame_indices"][:].tolist() == [0, 1, 0, 1]
     assert root["splits"]["train"][:].tolist() == [0, 1]
     assert root["splits"]["test"][:].tolist() == [2, 3]
     assert summary["num_runs"] == 2

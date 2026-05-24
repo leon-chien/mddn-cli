@@ -50,6 +50,23 @@ def resolve_preset(
     )
 
 
+def validate_preset_definition(preset: dict[str, Any]) -> None:
+    """Validate preset YAML structure without requiring runtime args."""
+
+    name = str(preset.get("name") or "")
+    if not name:
+        raise PresetError("Preset is missing name")
+    if not isinstance(preset.get("features"), list) or not preset["features"]:
+        raise PresetError(f"Preset '{name}' must define at least one feature.")
+    if not isinstance(preset.get("event"), dict) or not preset["event"]:
+        raise PresetError(f"Preset '{name}' must define one event.")
+    if "name" not in preset["event"] or "type" not in preset["event"]:
+        raise PresetError(f"Preset '{name}' event must include name and type.")
+    for feature in preset["features"]:
+        if not isinstance(feature, dict) or "name" not in feature or "type" not in feature:
+            raise PresetError(f"Preset '{name}' features must include name and type.")
+
+
 def _substitute(value: Any, values: dict[str, Any]) -> Any:
     if isinstance(value, str):
         if value.startswith("{") and value.endswith("}"):
@@ -63,4 +80,3 @@ def _substitute(value: Any, values: dict[str, Any]) -> Any:
     if isinstance(value, dict):
         return {key: _substitute(item, values) for key, item in value.items()}
     return value
-

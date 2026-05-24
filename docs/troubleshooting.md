@@ -30,14 +30,17 @@ currently require one compatible system.
 
 ## Missing Raw Files During Featurization
 
-If `convert` did not use `--store-positions`, featurization reopens the original
-raw files recorded in provenance. Restore those files or rerun:
+Current packages store compressed trajectory coordinates by default. If you
+created a `features-only`, `--no-coordinates`, or `linked` package,
+featurization may need the original raw files recorded in provenance. Restore
+those files or rerun with embedded coordinates:
 
 ```bash
-mddatanet convert ... --store-positions
+mddatanet convert ... --data-mode hybrid --storage-profile compressed
 ```
 
-Storing positions can make packages large, so it is disabled by default.
+For very large Hub datasets, use `--storage-profile linked` and make sure
+`download.yaml` contains coordinate URLs and checksums.
 
 ## Units And PBC
 
@@ -49,6 +52,12 @@ being present in the trajectory.
 
 Use unpacked `.mddatanet/` directories during active processing. Packing to zip
 is best for sharing or archiving.
+
+For Hub-scale sharing, use either `--storage-profile linked` or:
+
+```bash
+mddatanet split-package --input ready.mddatanet.zip --out-labels dataset.labels.mddatanet.zip --out-coordinates dataset.coordinates.zarr.zip
+```
 
 ## Validation Fails After Manual Edits
 

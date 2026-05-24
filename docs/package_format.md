@@ -6,7 +6,23 @@ MDDataNet packages are either unpacked `.mddatanet/` directories or packed
 ```text
 dataset.mddatanet/
   dataset.zarr/
-    arrays/
+    trajectory/
+      positions
+      box_vectors
+      frame_indices
+      source_frame_indices
+      frame_times
+      trajectory_ids
+      run_ids
+    topology/
+      atom_names
+      atom_types
+      residue_names
+      residue_ids
+      chain_ids
+      masses
+      charges
+      bonds
     features/
     labels/
     splits/
@@ -30,18 +46,29 @@ features, labels, or splits yet.
 
 ## Zarr Arrays
 
-`arrays/` contains frame and atom metadata:
+`trajectory/` contains standardized frame data:
 
 - `frame_indices`
 - `source_frame_indices`
 - `frame_times`
 - `trajectory_ids`
 - `run_ids`
+- `positions`, included for `compressed` and `full` packages unless disabled
+- `box_vectors`, unit-cell data when available
+
+`topology/` contains atom-level topology metadata:
+
 - `atom_names`
-- `residue_ids`
+- `atom_types`
 - `residue_names`
-- `positions`, optional and chunked
-- `dimensions`, optional unit-cell data
+- `residue_ids`
+- `chain_ids`
+- `masses`
+- `charges`
+- `bonds`
+
+Legacy packages may contain the older `arrays/` layout. Current writes use
+`trajectory/` and `topology/`.
 
 `features/` contains one array per feature.
 
@@ -49,7 +76,7 @@ features, labels, or splits yet.
 
 - `event_now`
 - `event_future_{H}`
-- `event_future_{H}_valid_mask`
+- `event_future_{H}_valid`
 - `time_to_event`
 
 `splits/` contains `train`, `val`, and `test` index arrays.
@@ -58,11 +85,24 @@ features, labels, or splits yet.
 
 ## Metadata And Provenance
 
-`metadata.json` describes dataset identity, system metadata, source metadata,
-features, labels, splits, license, and tags.
+`metadata.json` describes dataset identity, data mode, storage profile,
+coordinate storage, sampling, trajectory summary, system metadata, source
+metadata, features, labels, splits, license, and tags.
 
 `provenance.json` records commands, source files, checksums, run records, frame
 slicing, and whether positions were stored.
+
+## Storage Profiles
+
+- `compressed`: default. Stores coordinates as chunked compressed Zarr,
+  normally `float32` with zstd compression.
+- `full`: stores coordinates with maximum precision requested by the user,
+  still chunked and compressed for practical access.
+- `linked`: omits embedded coordinates and writes `download.yaml` with external
+  coordinate/topology URLs and checksums.
+
+Use `split-package` to separate a coordinate archive from a lightweight labels
+package for large Hub-scale datasets.
 
 ## Metrics
 

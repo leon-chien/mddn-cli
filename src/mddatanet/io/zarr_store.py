@@ -7,7 +7,7 @@ from typing import Any
 
 from mddatanet.utils.errors import DependencyError
 
-REQUIRED_ROOT_GROUPS = ("arrays", "features", "labels", "splits", "index")
+REQUIRED_ROOT_GROUPS = ("trajectory", "topology", "features", "labels", "splits", "index")
 DEFAULT_1D_CHUNK = 65_536
 DEFAULT_POSITION_FRAME_CHUNK = 64
 
@@ -20,10 +20,14 @@ def _zarr_module():
     return zarr
 
 
-def _default_compressor() -> Any:
+def default_compressor(name: str | None = "zstd") -> Any:
+    if name in {None, "none"}:
+        return None
     try:
         from numcodecs import Blosc
     except Exception:  # pragma: no cover - zarr can still write uncompressed arrays
+        return None
+    if name not in {"zstd", "blosc-zstd"}:
         return None
     return Blosc(cname="zstd", clevel=3, shuffle=Blosc.SHUFFLE)
 
@@ -60,6 +64,7 @@ def create_array(
     shape: tuple[int, ...],
     dtype: str,
     chunks: tuple[int, ...] | None = None,
+    compression: str | None = "zstd",
     overwrite: bool = True,
 ) -> Any:
     """Create a chunked Zarr array with default compression."""
@@ -70,7 +75,7 @@ def create_array(
         "chunks": chunks or _default_chunks(shape),
         "overwrite": overwrite,
     }
-    compressor = _default_compressor()
+    compressor = default_compressor(compression)
     if compressor is not None:
         kwargs["compressor"] = compressor
     if hasattr(group, "create_array"):
@@ -92,7 +97,7 @@ def create_string_array(
     values being written.
     """
 
-    max_len = max((len(str(value)) for value in values), default=1)
+    max_len = max(1, max((len(str(value)) for value in values), default=1))
     array = create_array(
         group,
         name,

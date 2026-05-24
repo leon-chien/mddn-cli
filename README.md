@@ -3,10 +3,10 @@
 MDDataNet converts molecular dynamics simulations into standardized, labeled,
 machine-learning-ready dataset packages.
 
-It reads MDAnalysis-compatible topology and trajectory files, computes trajectory
-features, applies reproducible event rules or presets, creates future-event
-labels and train/validation/test splits, validates the result, and writes a
-shareable `.mddatanet.zip` package.
+It reads MDAnalysis-compatible topology and trajectory files, stores standardized
+trajectory/topology data in chunked Zarr, applies reproducible event rules or
+presets, creates future-event labels and train/validation/test splits, validates
+the result, and writes a shareable `.mddatanet.zip` package.
 
 The CLI is useful locally today. The future MDDataNet Hub will be a separate
 metadata registry for discovering validated packages.
@@ -45,7 +45,7 @@ mddatanet convert \
   --system-type protein_ligand \
   --out kinase_raw.mddatanet
 
-mddatanet label \
+mddatanet analyze \
   --input kinase_raw.mddatanet \
   --preset ligand_unbinding \
   --ligand "resname LIG" \
@@ -66,6 +66,12 @@ mddatanet inspect kinase_ready.mddatanet.zip --features --labels --splits
 
 For huge active work, prefer unpacked `.mddatanet/` directories. Use
 `.mddatanet.zip` for sharing, archiving, and Hub manifest export.
+
+By default, `convert` writes `hybrid + compressed` packages: coordinates are
+stored under `dataset.zarr/trajectory/positions` as chunked, compressed
+`float32` arrays. Use `--storage-profile linked` with coordinate URLs and
+checksums for huge Hub-scale packages where coordinates live outside the
+`.mddatanet.zip`.
 
 ## Documentation
 
