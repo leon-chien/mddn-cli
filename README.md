@@ -34,6 +34,22 @@ mddatanet validate outputs/ligand_unbinding_demo.mddatanet.zip
 The demo generates a tiny synthetic protein-ligand trajectory at runtime. It
 does not commit example datasets or config templates to the repo.
 
+Python loader smoke test:
+
+```python
+from mddatanet import MDDataNetDataset
+
+ds = MDDataNetDataset(
+    "outputs/ligand_unbinding_demo.mddatanet.zip",
+    window_length=2,
+    target="ligand_unbinding_future_2",
+)
+
+item = ds[0]
+print(item["coordinates"].shape)
+print(item["label"], item["valid"])
+```
+
 ## Common Workflow
 
 ```bash
@@ -76,6 +92,7 @@ checksums for huge Hub-scale packages where coordinates live outside the
 ## Documentation
 
 - [Quickstart](docs/quickstart.md)
+- [Current CLI status](docs/current_cli_status.md)
 - [Command reference](docs/command_reference.md)
 - [Feature YAML reference](docs/feature_yaml_reference.md)
 - [Event YAML reference](docs/event_yaml_reference.md)

@@ -36,6 +36,25 @@ mddatanet inspect outputs/ligand_unbinding_demo.mddatanet.zip --labels --splits
 mddatanet validate outputs/ligand_unbinding_demo.mddatanet.zip
 ```
 
+Smoke-test trajectory-window loading from Python:
+
+```python
+from mddatanet import MDDataNetDataset
+
+ds = MDDataNetDataset(
+    "outputs/ligand_unbinding_demo.mddatanet.zip",
+    window_length=2,
+    target="ligand_unbinding_future_2",
+)
+
+item = ds[0]
+print(item["coordinates"].shape)
+print(item["label"], item["valid"])
+```
+
+The minimal loader returns NumPy/Python dictionaries and skips invalid
+future-label tail frames by default. It intentionally does not require PyTorch.
+
 ## Convert Your Own Data
 
 ```bash

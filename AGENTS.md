@@ -43,6 +43,59 @@ MDDataNet should become an ImageNet/ProteinNet-style standard for labeled MD
 datasets: common package format, reproducible labels, official splits, dataset
 cards, checksums, provenance, and a future public discovery/download registry.
 
+## Core Conceptual Analogy
+
+MDDataNet should conceptually resemble trajectory-learning ecosystems such as:
+
+- Waymo Open Dataset
+- nuScenes
+- Ego4D
+- Kinetics
+
+but for molecular dynamics trajectories.
+
+The core dataset object is not a feature table and not merely a stored
+simulation trajectory. The core dataset object is:
+
+```text
+trajectory window -> temporal ML task
+```
+
+MDDataNet packages should behave more like temporal trajectory-learning datasets
+than traditional simulation archives.
+
+Analogy:
+
+```text
+Waymo:
+past object trajectories -> predict future object motion
+
+MDDataNet:
+past molecular trajectories -> predict future molecular events
+```
+
+Examples:
+
+- ligand-pocket trajectory -> ligand unbinding within next 500 frames
+- protein interface trajectory -> dimerization within next 1000 frames
+- residue contact trajectory -> salt bridge breaking
+- protein conformational trajectory -> unfolding or native contact loss
+
+MDRepo and similar projects focus primarily on simulation storage, retrieval,
+and FAIR archival. MDDataNet focuses on standardizing how ML models learn from
+trajectories.
+
+The key differentiator is:
+
+```text
+standardized trajectories + temporal labels + future-event prediction targets
++ benchmark semantics + reproducible operational definitions
++ canonical package format + benchmark split policies
+```
+
+The intended outcome is an ML-ready benchmark ecosystem for molecular dynamics
+trajectory learning.
+
 ## Repository Separation
 
 Keep the separation intentional:
@@ -147,14 +200,14 @@ dataset.mddatanet/
   metadata.json
   provenance.json
   feature_config.yaml
-    events.yaml
-    presets_used.json
-    user_presets/
-    splits.json
-    checksums.json
-    label_statistics.json
-    baseline_metrics.json
-    dataset_card.md
+  events.yaml
+  presets_used.json
+  user_presets/
+  splits.json
+  checksums.json
+  label_statistics.json
+  baseline_metrics.json
+  dataset_card.md
   README.md
   LICENSE
 ```
@@ -206,6 +259,27 @@ MDDataNet package = standardized MD trajectory + topology + temporal labels
 Features are useful derived analyses, but they are not the core dataset. The
 core dataset should look more like a video ML dataset: coordinates over time
 plus frame-level and future-window labels.
+
+The trajectory itself is the primary ML object. Features are useful derived
+analyses and annotations, but they are not the canonical data representation.
+MDDataNet should support models that train directly on:
+
+```text
+coordinates over time + topology + temporal labels
+```
+
+similar to how autonomous-driving datasets support models that learn directly
+from temporal sensor trajectories.
+
+The package should therefore always preserve:
+
+- frame ordering
+- run identity
+- trajectory identity
+- source frame identity
+- temporal continuity
+
+unless explicitly removed by the user.
 
 `mddatanet convert` defaults:
 
@@ -279,6 +353,42 @@ license:
   data_license: CC-BY-4.0
 ```
 
+## Benchmark Task Semantics
+
+MDDataNet datasets should explicitly define ML task semantics.
+
+Supported task categories include:
+
+- future_event_prediction
+- transition_detection
+- state_classification
+- trajectory_forecasting
+- interaction_prediction
+
+Examples:
+
+- ligand_unbinding_future_500
+- ligand_binding_future_500
+- dimerization_future_1000
+- dissociation_future_1000
+- salt_bridge_breaking_future_200
+- native_contact_loss_future_500
+- protein_unfolding_future_1000
+
+Datasets should expose machine-readable task metadata. Recommended metadata
+structure:
+
+```yaml
+task:
+  task_type: future_event_prediction
+  target_event: ligand_unbinding
+  horizon_frames: 500
+  input_type: trajectory_window
+```
+
+The Hub should eventually index datasets primarily by ML task semantics rather
+than only by molecular system.
+
 ## Architecture Rules
 
 - Keep the CLI useful without MDDataNet Hub.
@@ -293,6 +403,41 @@ license:
 - Preserve backward compatibility for CLI flags unless a change is unavoidable.
 - Keep scientific labels framed as reproducible operational labels, not
   universal biological truths.
+- Design future APIs around trajectory windows.
+- The canonical ML training pattern should be:
+
+```text
+frames t-W:t -> predict event in t:t+H
+```
+
+Future loaders and APIs should naturally expose:
+
+- window length
+- prediction horizon
+- valid masks
+- trajectory IDs
+- run IDs
+- topology metadata
+
+The long-term Python API target is:
+
+```python
+from mddatanet import MDDataNetDataset
+
+dataset = MDDataNetDataset(
+    "ligand_unbinding_v1.mddatanet.zip",
+    window_length=64,
+    target="ligand_unbinding_future_500",
+)
+```
+
+Each item should eventually provide:
+
+- trajectory coordinate window
+- topology/atom metadata
+- labels
+- valid masks
+- dataset/task metadata
 
 ## Large MD Data Rules
 
@@ -313,6 +458,18 @@ license:
 - Keep distance/contact calculations blockwise for large selections.
 - Multi-run packages require one shared topology and atom ordering unless a
   future design explicitly supports heterogeneous systems.
+- Trajectory continuity is scientifically important.
+- Do not randomly reorder frames internally unless explicitly requested by the
+  user.
+- All transformations must preserve traceability back to:
+  - original trajectory file
+  - original frame index
+  - original run
+- Traceability must be stored through:
+  - `trajectory_ids`
+  - `run_ids`
+  - `source_frame_indices`
+- This traceability is required for reproducibility and leakage-safe ML splits.
 
 ## Testing Rules
 
@@ -379,3 +536,41 @@ Scientific/product work:
 - Decide which dataset licenses are acceptable for Hub inclusion.
 - Decide required metadata fields for curated Hub approval.
 - Add responsible-use language to dataset cards.
+
+Benchmark ecosystem work:
+
+- Define official benchmark tasks for common MD trajectory-learning problems.
+- Define leakage-safe canonical split policies for:
+  - trajectory-level splits
+  - run-level splits
+  - temporal splits with gaps
+  - future protein-family splits
+  - future ligand-scaffold splits
+- Define standard evaluation metrics for:
+  - future-event prediction
+  - transition detection
+  - interaction prediction
+  - trajectory forecasting
+- Add baseline reference models and benchmark baselines later.
+- Ensure all operational labels remain reproducible rule-based definitions
+  rather than subjective annotations.
+
+## Final Project Positioning
+
+MDDataNet is not merely a repository for MD simulations.
+
+MDDataNet is a standardized benchmark and dataset ecosystem for molecular
+dynamics trajectory learning.
+
+Its purpose is to convert heterogeneous molecular dynamics simulations into
+reproducible, ML-ready temporal prediction tasks using standardized trajectory
+storage, topology representation, operational event definitions, future-event
+labels, benchmark splits, provenance tracking, and dataset cards.
+
+The conceptual target is:
+
+```text
+Waymo Open Dataset for molecular dynamics trajectories
+```
+
+rather than a generic simulation archive.

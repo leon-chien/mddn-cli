@@ -4,6 +4,7 @@ from pathlib import Path
 
 DOCS = [
     "docs/quickstart.md",
+    "docs/current_cli_status.md",
     "docs/command_reference.md",
     "docs/feature_yaml_reference.md",
     "docs/event_yaml_reference.md",
@@ -29,3 +30,18 @@ def test_readme_links_point_to_existing_local_docs():
     assert local_links
     for link in local_links:
         assert Path(link).exists(), link
+
+
+def test_agents_contains_trajectory_learning_positioning():
+    guide = Path("AGENTS.md").read_text(encoding="utf-8")
+
+    for heading in (
+        "## Core Conceptual Analogy",
+        "## Benchmark Task Semantics",
+        "## Final Project Positioning",
+    ):
+        assert heading in guide
+    assert "Waymo Open Dataset for molecular dynamics trajectories" in guide
+    assert "frames t-W:t -> predict event in t:t+H" in guide
+    assert "trajectory_ids" in guide
+    assert "source_frame_indices" in guide
