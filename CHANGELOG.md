@@ -26,6 +26,9 @@ package format version is tracked separately in generated package metadata.
   Hub-shaped `metadata.json`, `manifest.json`, `download.yaml`,
   `checksums.json`, task metadata, named assets, descriptive metrics, and
   optional `citation.bib`.
+- Ecosystem v0.1 documentation that explains the CLI-to-Hub handoff:
+  `.mddatanet.zip` creation, external package upload, Hub metadata submission,
+  and downstream training with `MDDataNetDataset`.
 - GitHub Actions CI and manual TestPyPI workflow.
 
 ### Notes

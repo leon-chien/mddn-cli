@@ -124,6 +124,67 @@ The intended handoff is:
 The Hub stores metadata, download links, checksums, dataset cards, and benchmark
 semantics. It does not host large trajectories or `.mddatanet.zip` archives.
 
+## Create A Hub-Ready Dataset
+
+For a quick proof, start with the runtime demo:
+
+```bash
+mddatanet demo --out-dir outputs
+mddatanet validate outputs/ligand_unbinding_demo.mddatanet.zip
+mddatanet inspect outputs/ligand_unbinding_demo.mddatanet.zip --features --labels --splits
+```
+
+For a real dataset, follow the same shape as the common workflow above:
+convert raw MD, analyze or label it with reproducible rules, split it with a
+leakage-aware policy, and validate the final `.mddatanet.zip`.
+
+Upload the package to external storage before curation:
+
+```text
+outputs/ligand_unbinding_demo.mddatanet.zip
+  -> Hugging Face Datasets, Zenodo, S3/R2, GCS, or institutional storage
+```
+
+Then export the metadata folder for
+[MDDataNet Hub](https://github.com/leon-chien/mddn-hub):
+
+```bash
+mddatanet export-manifest outputs/ligand_unbinding_demo.mddatanet.zip \
+  --out ligand_unbinding_demo_from_cli \
+  --dataset-id ligand_unbinding_demo_from_cli \
+  --download-url https://example.org/ligand_unbinding_demo.mddatanet.zip
+```
+
+Submit only the exported metadata folder to the Hub:
+
+```text
+mddn-hub/
+  datasets/
+    ligand_unbinding_demo_from_cli/
+      metadata.json
+      manifest.json
+      download.yaml
+      checksums.json
+      dataset_card.md
+```
+
+The CLI does not host packages, upload data, or automate pull requests. It
+creates ML-ready packages and exports the metadata that the Hub validates and
+indexes.
+
+After a Hub entry is merged, users read `download.yaml`, download and verify the
+package, then train with the Python loader:
+
+```python
+from mddatanet import MDDataNetDataset
+
+dataset = MDDataNetDataset(
+    "ligand_unbinding_demo.mddatanet.zip",
+    window_length=2,
+    target="ligand_unbinding_future_2",
+)
+```
+
 ## Documentation
 
 - [Quickstart](docs/quickstart.md)
