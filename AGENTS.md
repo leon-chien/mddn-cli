@@ -166,8 +166,9 @@ The current pipeline can:
 - split coordinate-heavy packages into a lightweight labels package plus a
   coordinate archive for Hub-scale sharing;
 - run a runtime-generated ligand unbinding demo without committed demo data;
-- export Hub-ready registry metadata files, metrics files, and optional
-  `citation.bib`.
+- export Hub-schema registry metadata files for
+  `mddn-hub/datasets/<dataset_name>/`, including named download/checksum
+  assets, task metadata, metrics files, and optional `citation.bib`.
 
 ## Current Package Format
 
@@ -305,7 +306,8 @@ storage while GitHub/the Hub registry stores metadata only.
 
 ## Hub Registry Format
 
-`mddatanet export-manifest` should produce a small Hub registry folder:
+`mddatanet export-manifest` should produce a small Hub registry folder shaped
+for `mddn-hub/datasets/<dataset_name>/`:
 
 ```text
 dataset_id/
@@ -322,6 +324,14 @@ dataset_id/
 The Hub repo should not store huge `.mddatanet.zip` files. It should store
 metadata, manifests, dataset cards, checksums, citations, optional baseline
 metrics, and download instructions.
+
+The exported `metadata.json` is Hub-schema metadata, not a direct copy of the
+package's internal `metadata.json`. It must include machine-readable task
+metadata (`task_type`, `target_event`, `horizon_frames`, and
+`input_type: trajectory_window`), storage profile, coordinate storage,
+statistics, splits, provenance, license, and extensions. `download.yaml` and
+`checksums.json` use matching named assets such as `package`, `coordinates`,
+and `topology`.
 
 Structured tags should be multi-level and multi-label, for example:
 
@@ -515,6 +525,8 @@ Hub-readiness work (NEXT PHASE):
 - [x] Add JSON Schema exports for Hub CI (`export-schema`).
 - [x] Add `citation.bib` and `baseline_metrics.json` support in manifest export.
 - [x] Add opt-in URL size verification for external downloads.
+- [x] Make `export-manifest` produce Hub-shaped registry entries that validate
+  against the sibling `mddn-hub` schemas.
 - [ ] Build `mddatanet-hub` as a separate metadata registry repository.
 
 Documentation and packaging work:

@@ -57,7 +57,8 @@ Current user-facing commands:
 - `mddatanet pack` / `mddatanet unpack`: archive and unpack packages.
 - `mddatanet split-package`: split a coordinate-heavy package into labels and coordinate archives.
 - `mddatanet card`: refresh `dataset_card.md`.
-- `mddatanet export-manifest`: export Hub-ready metadata files.
+- `mddatanet export-manifest`: export Hub-schema registry files for
+  `mddn-hub/datasets/<dataset_name>/`.
 - `mddatanet export-schema`: export JSON schemas for future Hub CI.
 - `mddatanet demo`: run a generated ligand-unbinding demo.
 - `mddatanet presets list/show/explain/validate-yaml`: inspect and validate presets.

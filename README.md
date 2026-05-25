@@ -89,6 +89,22 @@ stored under `dataset.zarr/trajectory/positions` as chunked, compressed
 checksums for huge Hub-scale packages where coordinates live outside the
 `.mddatanet.zip`.
 
+## Hub Registry Export
+
+`mddatanet export-manifest` now writes a Hub-ready registry folder that can be
+copied into `mddn-hub/datasets/<dataset_name>/`:
+
+```bash
+mddatanet export-manifest kinase_ready.mddatanet.zip \
+  --out kinase_ligand_unbinding_v1
+```
+
+The folder contains Hub-schema `metadata.json`, `manifest.json`,
+`download.yaml`, `checksums.json`, `dataset_card.md`, and label/metric files
+when available. If `--download-url` is omitted, the exporter writes a
+schema-valid placeholder URL so the folder can pass Hub validation before the
+real external storage URL is known.
+
 ## Documentation
 
 - [Quickstart](docs/quickstart.md)

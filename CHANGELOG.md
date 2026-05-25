@@ -9,9 +9,10 @@ package format version is tracked separately in generated package metadata.
 
 ### Added
 
-- Typer CLI with `convert`, `featurize`, `label`, `split`, `validate`,
-  `inspect`, `pack`, `unpack`, `card`, `demo`, `export-manifest`, and
-  `export-schema`.
+- Typer CLI with `convert`, `featurize`, `label`, `analyze`, `split`,
+  `validate`, `inspect`, `pack`, `unpack`, `split-package`, `card`, `demo`,
+  `export-manifest`, `export-schema`, and preset inspection/validation
+  commands.
 - MDAnalysis-backed conversion for raw topology/trajectory workflows.
 - Chunked Zarr package storage with metadata, provenance, checksums, dataset
   cards, and optional stored positions.
@@ -21,7 +22,10 @@ package format version is tracked separately in generated package metadata.
 - Fixed-horizon future labels, valid masks, time-to-event labels, split
   generation, and descriptive label metrics.
 - Runtime-generated ligand unbinding demo.
-- Hub manifest export for future registry workflows.
+- Hub-schema manifest export for future registry workflows, including
+  Hub-shaped `metadata.json`, `manifest.json`, `download.yaml`,
+  `checksums.json`, task metadata, named assets, descriptive metrics, and
+  optional `citation.bib`.
 - GitHub Actions CI and manual TestPyPI workflow.
 
 ### Notes

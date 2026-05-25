@@ -134,5 +134,11 @@ Export small metadata files for the future Hub registry:
 mddatanet export-manifest ready.mddatanet.zip --out hub_dataset_dir
 ```
 
+The exported folder is shaped for `mddn-hub/datasets/<dataset_name>/` and
+contains Hub-schema files: `metadata.json`, `manifest.json`, `download.yaml`,
+`checksums.json`, `dataset_card.md`, `label_statistics.json`, and
+`baseline_metrics.json` when metrics exist. `citation.bib` is included only
+when citation metadata is present.
+
 Add `--download-url` after uploading the large package to external storage.
 Use `--verify-download` only when the URL is reachable and should be checked.

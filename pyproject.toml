@@ -44,6 +44,8 @@ dev = [
   "pytest-cov>=5.0",
   "ruff>=0.5",
   "build>=1.2",
+  "jsonschema>=4.21",
+  "referencing>=0.35",
 ]
 ml = [
   "scikit-learn>=1.4",

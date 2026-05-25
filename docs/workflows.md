@@ -105,6 +105,11 @@ mddatanet validate ready.mddatanet.zip
 mddatanet export-manifest ready.mddatanet.zip --out hub_dataset_dir
 ```
 
+This writes Hub-ready registry metadata rather than copying the package's
+internal metadata directly. The folder can be copied into
+`mddn-hub/datasets/<dataset_name>/` and contains named download/checksum assets
+for the package, plus metrics files when they exist.
+
 After uploading the large package to external storage:
 
 ```bash
