@@ -8,8 +8,12 @@ trajectory/topology data in chunked Zarr, applies reproducible event rules or
 presets, creates future-event labels and train/validation/test splits, validates
 the result, and writes a shareable `.mddatanet.zip` package.
 
-The CLI is useful locally today. The future MDDataNet Hub will be a separate
-metadata registry for discovering validated packages.
+The CLI is the package-building side of the MDDataNet ecosystem. The
+[MDDataNet Hub](https://github.com/leon-chien/mddn-hub) is the metadata
+registry for discovering validated packages: the CLI creates `.mddatanet.zip`
+archives, users upload those archives to external storage, the Hub stores
+metadata and download links, and downstream users download packages to train
+with `MDDataNetDataset`.
 
 ## Install
 
@@ -91,7 +95,7 @@ checksums for huge Hub-scale packages where coordinates live outside the
 
 ## Hub Registry Export
 
-`mddatanet export-manifest` now writes a Hub-ready registry folder that can be
+`mddatanet export-manifest` writes a Hub-ready registry folder that can be
 copied into `mddn-hub/datasets/<dataset_name>/`:
 
 ```bash
@@ -104,6 +108,21 @@ The folder contains Hub-schema `metadata.json`, `manifest.json`,
 when available. If `--download-url` is omitted, the exporter writes a
 schema-valid placeholder URL so the folder can pass Hub validation before the
 real external storage URL is known.
+
+The intended handoff is:
+
+1. Use this CLI to create and validate a `.mddatanet.zip` package.
+2. Upload the package to external storage such as Hugging Face Datasets, Zenodo,
+   S3/R2, GCS, or institutional storage.
+3. Run `mddatanet export-manifest` with the package URL or replace the
+   placeholder URL in `download.yaml`.
+4. Submit the metadata folder to the
+   [MDDataNet Hub](https://github.com/leon-chien/mddn-hub).
+5. Users read the Hub metadata, download and verify the package, then train with
+   `MDDataNetDataset`.
+
+The Hub stores metadata, download links, checksums, dataset cards, and benchmark
+semantics. It does not host large trajectories or `.mddatanet.zip` archives.
 
 ## Documentation
 
