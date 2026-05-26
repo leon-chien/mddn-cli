@@ -7,6 +7,7 @@ from mddatanet.cli import app
 from mddatanet.convert import convert_package
 from mddatanet.format.metadata import read_metadata
 from mddatanet.format.validation import validate_package
+from mddatanet.hf.workspace import init_workspace, prepare_workspace, validate_workspace
 from mddatanet.io.split_package import split_package_for_hub
 from mddatanet.io.zarr_store import open_zarr_group
 
@@ -84,36 +85,30 @@ def test_linked_storage_omits_positions_and_validates_download_yaml(tmp_path):
 
 def test_analyze_command_runs_builtin_preset(tmp_path):
     pdb = write_ligand_unbinding_pdb(tmp_path / "ligand.pdb")
-    raw = tmp_path / "raw.mddatanet"
-    labeled = tmp_path / "labeled.mddatanet"
-    convert_package(topology=pdb, trajectory=None, coordinates=None, name="ligand", out=raw)
+    project = tmp_path / "project"
+    init_workspace(project)
+    prepare_workspace(project_root=project, topology=pdb, keep_solvent=True, overwrite=True)
 
     result = CliRunner().invoke(
         app,
         [
             "analyze",
-            "--input",
-            str(raw),
+            str(project),
             "--preset",
             "ligand_unbinding",
             "--ligand",
             "resname LIG",
             "--pocket",
-            "resname ALA",
+            "protein",
             "--param",
             "distance_threshold=5.0",
-            "--horizon-frames",
-            "1",
-            "--out",
-            str(labeled),
         ],
     )
 
-    assert result.exit_code == 0
-    zarr_root = open_zarr_group(labeled / "dataset.zarr", mode="r")
-    assert "ligand_pocket_min_distance" in zarr_root["features"]
-    assert "event_future_1_valid" in zarr_root["labels"]["ligand_unbinding"]
-    assert validate_package(labeled).ok
+    assert result.exit_code == 0, result.output
+    manifest = json.loads((project / ".mddn_cache" / "mddatanet.json").read_text())
+    assert manifest["analysis"]["primary_metric"] == "ligand_pocket_min_distance"
+    assert not validate_workspace(project)
 
 
 def test_split_package_outputs_labels_and_coordinate_archives(tmp_path):

@@ -13,17 +13,16 @@ def test_cli_help_works():
 def test_documented_command_help_works():
     runner = CliRunner()
     commands = [
-        ["convert"],
-        ["featurize"],
-        ["label"],
-        ["split"],
-        ["validate"],
+        ["init"],
         ["inspect"],
-        ["pack"],
-        ["unpack"],
-        ["card"],
-        ["export-manifest"],
-        ["export-schema"],
+        ["prepare"],
+        ["analyze"],
+        ["tag"],
+        ["package"],
+        ["validate"],
+        ["publish"],
+        ["load"],
+        ["benchmark"],
         ["demo"],
         ["presets", "list"],
         ["presets", "show"],
@@ -34,3 +33,11 @@ def test_documented_command_help_works():
         args = [*command, "--help"]
         result = runner.invoke(app, args)
         assert result.exit_code == 0, args
+
+
+def test_removed_package_commands_are_not_public():
+    result = CliRunner().invoke(app, ["--help"])
+
+    assert result.exit_code == 0
+    for command in ("convert", "push-to-hub", "convert-and-tag", "split-package", "unpack", "export-manifest"):
+        assert command not in result.output

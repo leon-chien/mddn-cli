@@ -1,80 +1,53 @@
 # Preset Guide
 
-Presets generate feature and event definitions from standard operational rules.
-They are product behavior, not user config templates.
-
-List presets:
+Presets are built-in operational task definitions for `mddatanet analyze`.
 
 ```bash
 mddatanet presets list
-```
-
-Show one preset:
-
-```bash
 mddatanet presets show ligand_unbinding
-```
-
-Explain one preset:
-
-```bash
 mddatanet presets explain ligand_unbinding
 ```
 
-## Ligand Presets
+## Implemented HF MVP Presets
 
 ### `ligand_unbinding`
 
-Required:
+Required selections:
 
 - `--ligand`
 - `--pocket`
 
-Default rule:
+Default concept:
 
 ```text
-ligand_pocket_min_distance > 15.0 angstrom
+ligand_pocket_min_distance > distance_threshold
 ```
 
-Overrides:
+Useful overrides:
 
 - `--param distance_threshold=15.0`
 - `--param horizon_frames=500`
 
 ### `ligand_binding`
 
-Required:
+Required selections:
 
 - `--ligand`
 - `--pocket`
 
-Default rule:
+Default concept:
 
 ```text
-ligand_pocket_min_distance < 4.5 angstrom
+ligand_pocket_min_distance < distance_threshold
 ```
 
-## Interaction Presets
+### `protein_unfolding`
 
-- `salt_bridge_breaking`
-- `salt_bridge_formation`
-- `hydrogen_bond_breaking`
-- `hydrogen_bond_formation`
-
-These currently use distance-based operational rules. Hydrogen bond angle
-criteria are a future scientific refinement.
-
-## Protein And Conformation Presets
-
-- `protein_unfolding`
-- `dihedral_transition`
-- `domain_opening`
-- `loop_opening`
-
-Reference-dependent presets require `--reference` when the computed features
-need a native/reference structure.
+The current HF MVP uses radius of gyration as the primary metric. Reference-based
+RMSD unfolding is planned for a later metric expansion.
 
 ## Limitations
 
-Preset labels are standardized task labels. They are useful for reproducible ML
-benchmarks, but they are not universal scientific definitions.
+Presets are standardized operational labels for ML tasks. They are not universal
+scientific definitions. The metric value, threshold, horizon, and source
+trajectory context must travel with the dataset.

@@ -48,31 +48,29 @@ def test_cli_convert_accepts_repeated_trajectories(tmp_path):
     topology = write_tiny_multimodel_pdb(tmp_path / "topology.pdb")
     run_a = write_tiny_multimodel_pdb(tmp_path / "run_a.pdb")
     run_b = write_tiny_multimodel_pdb(tmp_path / "run_b.pdb")
-    package = tmp_path / "multi.mddatanet"
+    project = tmp_path / "multi"
+
+    init = CliRunner().invoke(app, ["init", str(project)])
+    assert init.exit_code == 0
 
     result = CliRunner().invoke(
         app,
         [
-            "convert",
+            "prepare",
+            str(project),
             "--topology",
             str(topology),
             "--trajectory",
             str(run_a),
             "--trajectory",
             str(run_b),
-            "--run-id",
-            "a",
-            "--run-id",
-            "b",
-            "--name",
-            "multi",
-            "--out",
-            str(package),
+            "--overwrite",
         ],
     )
 
-    assert result.exit_code == 0
-    assert validate_package(package).ok
+    assert result.exit_code == 0, result.output
+    manifest = __import__("json").loads((project / ".mddn_cache" / "mddatanet.json").read_text())
+    assert len({shard["run_index"] for shard in manifest["shards"]}) == 2
 
 
 def test_convert_rejects_mismatched_run_ids(tmp_path):

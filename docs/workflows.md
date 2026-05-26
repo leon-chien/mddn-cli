@@ -1,120 +1,46 @@
-# Example Workflows
+# Workflows
 
-## Preset Labeling
-
-```bash
-mddatanet convert \
-  --topology system.pdb \
-  --trajectory traj.xtc \
-  --name ligand_run \
-  --system-type protein_ligand \
-  --out ligand_raw.mddatanet
-
-mddatanet analyze \
-  --input ligand_raw.mddatanet \
-  --preset ligand_unbinding \
-  --ligand "resname LIG" \
-  --pocket "protein" \
-  --out ligand_labeled.mddatanet
-
-mddatanet split --input ligand_labeled.mddatanet --strategy temporal --gap 100 --out ligand_ready.mddatanet.zip
-mddatanet validate ligand_ready.mddatanet.zip
-mddatanet inspect ligand_ready.mddatanet.zip --features --labels --splits
-```
-
-`analyze` is the high-level preset path. It resolves the preset, computes
-required features, writes frame labels, and refreshes package metadata.
-
-## Custom Features And Events
-
-`features.yaml`:
-
-```yaml
-features:
-  - name: ligand_pocket_min_distance
-    type: min_distance
-    selection_a: "resname LIG"
-    selection_b: "protein"
-    units: angstrom
-```
-
-`events.yaml`:
-
-```yaml
-events:
-  - name: ligand_unbinding
-    type: feature_threshold
-    feature: ligand_pocket_min_distance
-    operator: greater_than
-    threshold: 15.0
-    horizon_frames: 500
-```
-
-Run:
+## Standard HF Workflow
 
 ```bash
-mddatanet featurize --input raw.mddatanet --features features.yaml --out features.mddatanet
-mddatanet label --input features.mddatanet --events events.yaml --out labeled.mddatanet
+mddatanet init my_project
+mddatanet prepare my_project --topology system.pdb --trajectory run.dcd
+mddatanet analyze my_project --preset ligand_unbinding --ligand "resname LIG" --pocket protein
+mddatanet package my_project
+mddatanet validate my_project
+mddatanet publish my_project --repo-id USER/my-dataset
 ```
 
-## Multi-Run Package
+## Custom Metric Workflow
 
 ```bash
-mddatanet convert \
-  --topology system.psf \
-  --coordinates system.pdb \
-  --trajectory run1.dcd \
-  --trajectory run2.dcd \
-  --run-id run1 \
-  --run-id run2 \
-  --name replicate_dataset \
-  --out replicate_dataset.mddatanet
-
-mddatanet split --input replicate_dataset.mddatanet --strategy trajectory --out replicate_ready.mddatanet
+mddatanet prepare my_project --topology system.pdb --trajectory run.xtc
+mddatanet analyze my_project --custom-script metrics.py --func my_metric --primary-metric my_metric
+mddatanet package my_project
 ```
 
-## Linked Coordinate Package
+The custom function must return one numeric scalar per frame.
+
+## Manual Event Tagging
 
 ```bash
-mddatanet convert \
-  --topology system.pdb \
-  --trajectory traj.xtc \
-  --name huge_dataset \
-  --storage-profile linked \
-  --coordinates-url https://storage.example/huge_dataset.coordinates.zarr.zip \
-  --coordinates-sha256 abc123 \
-  --out huge_dataset.labels.mddatanet.zip
+mddatanet tag my_project --event activation_transition --start-frame 2000 --end-frame 2400
 ```
 
-Linked packages keep labels, features, metadata, and checksums in the
-`.mddatanet.zip` while coordinates live in external storage.
+The event must be listed in `mddatanet.yaml`.
 
-## Split Coordinates For Hub-Scale Sharing
+## Metadata-First Search
 
-```bash
-mddatanet split-package \
-  --input ready.mddatanet.zip \
-  --out-labels dataset.labels.mddatanet.zip \
-  --out-coordinates dataset.coordinates.zarr.zip
+After publishing, users can inspect the lightweight split first:
+
+```python
+from datasets import load_dataset
+
+index = load_dataset("USER/my-dataset", split="metadata_index")
 ```
 
-## Hub Manifest Export
+Then they can stream heavy rows:
 
-```bash
-mddatanet validate ready.mddatanet.zip
-mddatanet export-manifest ready.mddatanet.zip --out hub_dataset_dir
-```
-
-This writes Hub-ready registry metadata rather than copying the package's
-internal metadata directly. The folder can be copied into
-`mddn-hub/datasets/<dataset_name>/` and contains named download/checksum assets
-for the package, plus metrics files when they exist.
-
-After uploading the large package to external storage:
-
-```bash
-mddatanet export-manifest ready.mddatanet.zip \
-  --out hub_dataset_dir \
-  --download-url https://example.org/ready.mddatanet.zip \
-  --overwrite
+```python
+stream = load_dataset("USER/my-dataset", split="train", streaming=True)
 ```

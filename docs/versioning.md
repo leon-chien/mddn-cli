@@ -2,34 +2,24 @@
 
 MDDataNet uses semantic versioning for the CLI and Python package.
 
-## Version Policy
+- Patch releases: bug fixes and docs.
+- Minor releases: new commands, metrics, presets, or HF export options.
+- Major releases: incompatible CLI or Hugging Face schema changes.
 
-- Patch releases fix bugs, improve docs, or improve error messages.
-- Minor releases add commands, features, presets, metadata fields, or compatible
-  schema additions.
-- Major releases are reserved for incompatible package format or schema changes.
-
-The package format version is tracked separately in `metadata.json`.
+The 0.1.0 line is pre-release and may still change quickly while the HF-native
+schema stabilizes.
 
 ## Release Checklist
-
-Before a release:
 
 ```bash
 python -m pytest
 python -m ruff check src tests
 python -m build
 mddatanet demo
-mddatanet validate outputs/ligand_unbinding_demo.mddatanet.zip
+mddatanet publish outputs/ligand_unbinding_demo_hf \
+  --repo-id USER/ligand-unbinding-demo \
+  --dry-run-out /tmp/mddatanet_demo_parquet
 ```
 
-Then:
-
-1. Update `CHANGELOG.md`.
-2. Confirm `pyproject.toml` version and metadata.
-3. Tag the release.
-4. Run the manual TestPyPI workflow.
-5. Install from TestPyPI in a clean environment.
-6. Publish to PyPI only after the TestPyPI package works.
-
-PyPI publication should stay manual until the schema and API are stable.
+Then update `CHANGELOG.md`, tag the release, publish to TestPyPI, and only move
+to PyPI once the HF schema is stable.

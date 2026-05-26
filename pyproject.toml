@@ -12,7 +12,7 @@ license = "MIT"
 authors = [
   { name = "Leon Chien" }
 ]
-keywords = ["molecular-dynamics", "machine-learning", "datasets", "zarr", "mdanalysis"]
+keywords = ["molecular-dynamics", "machine-learning", "datasets", "huggingface", "parquet", "mdanalysis"]
 classifiers = [
   "Development Status :: 2 - Pre-Alpha",
   "Environment :: Console",
@@ -36,6 +36,10 @@ dependencies = [
   "PyYAML>=6.0",
   "pandas>=2.0",
   "tqdm>=4.66",
+  "datasets>=2.19",
+  "huggingface_hub>=0.23",
+  "pyarrow>=15.0",
+  "ray>=2.9",
 ]
 
 [project.optional-dependencies]

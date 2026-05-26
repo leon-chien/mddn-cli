@@ -1,4 +1,4 @@
-"""Typer command surface for MDDataNet."""
+"""Typer command surface for the Hugging Face-native MDDataNet CLI."""
 
 from __future__ import annotations
 
@@ -7,423 +7,255 @@ from pathlib import Path
 
 import typer
 
-from mddatanet.convert import convert_package
 from mddatanet.demo import run_ligand_unbinding_demo
-from mddatanet.features.compute import featurize_package
-from mddatanet.format.dataset_card import write_dataset_card
-from mddatanet.format.metadata import read_metadata
-from mddatanet.format.provenance import read_provenance
-from mddatanet.format.validation import (
-    format_inspection,
-    format_inspection_json,
-    inspect_package,
-    validate_package,
+from mddatanet.hf.workspace import (
+    analyze_workspace,
+    benchmark_registry,
+    init_workspace,
+    inspect_source,
+    load_hf_dataset,
+    package_workspace,
+    prepare_workspace,
+    publish_workspace,
+    tag_workspace,
+    validate_workspace,
+    workspace_summary,
 )
-from mddatanet.hub import export_manifest
-from mddatanet.io.checksums import write_checksums
-from mddatanet.io.package import pack_package, unpack_package
-from mddatanet.io.split_package import split_package_for_hub
-from mddatanet.io.workspace import PackageWorkspace
-from mddatanet.labels.service import label_package
 from mddatanet.presets.registry import registry as preset_registry
-from mddatanet.splits.service import split_package
 from mddatanet.utils.errors import MDDataNetError
-from mddatanet.utils.logging import console, print_error, print_step, print_success
+from mddatanet.utils.logging import console, print_error, print_success
 from mddatanet.utils.yaml import read_yaml
 
 app = typer.Typer(
     name="mddatanet",
-    help="Convert MD simulations into labeled, ML-ready dataset packages.",
+    help="Prepare MD trajectories as Hugging Face-native molecular ML datasets.",
 )
 presets_app = typer.Typer(help="Inspect built-in event presets.")
 app.add_typer(presets_app, name="presets")
 
 
 @app.command()
-def convert(
-    topology: Path = typer.Option(..., "--topology", exists=False, help="Topology file."),
-    trajectory: list[Path] | None = typer.Option(None, "--trajectory", help="Trajectory file. Repeat for multiple runs."),
-    coordinates: Path | None = typer.Option(None, "--coordinates", help="Coordinate file."),
-    name: str = typer.Option(..., "--name", help="Dataset name."),
-    description: str | None = typer.Option(None, "--description", help="Short dataset description."),
-    out: Path = typer.Option(..., "--out", help="Output .mddatanet directory or .mddatanet.zip."),
-    stride: int = typer.Option(1, "--stride", min=1),
-    start: int | None = typer.Option(None, "--start"),
-    stop: int | None = typer.Option(None, "--stop"),
-    chunk_size: int = typer.Option(100, "--chunk-size", help="Processing chunk size (frames)."),
-    data_mode: str = typer.Option("hybrid", "--data-mode", help="hybrid, trajectory, or features-only."),
-    storage_profile: str = typer.Option("compressed", "--storage-profile", help="compressed, full, or linked."),
-    no_coordinates: bool = typer.Option(False, "--no-coordinates", help="Do not embed trajectory coordinates."),
-    coordinate_dtype: str = typer.Option("float32", "--coordinate-dtype", help="float32 or float64."),
-    compression: str = typer.Option("zstd", "--compression", help="zstd, blosc-zstd, or none."),
-    chunk_frames: int = typer.Option(100, "--chunk-frames", help="Coordinate chunk size in frames."),
-    chunk_atoms: int = typer.Option(1000, "--chunk-atoms", help="Coordinate chunk size in atoms."),
-    coordinate_precision: float | None = typer.Option(None, "--coordinate-precision", help="Round coordinates to this Angstrom precision."),
-    coordinates_url: str | None = typer.Option(None, "--coordinates-url", help="External coordinate URL for linked storage."),
-    coordinates_sha256: str | None = typer.Option(None, "--coordinates-sha256", help="External coordinate SHA256 for linked storage."),
-    topology_url: str | None = typer.Option(None, "--topology-url", help="External topology URL for linked storage."),
-    topology_sha256: str | None = typer.Option(None, "--topology-sha256", help="External topology SHA256 for linked storage."),
-    store_positions: bool = typer.Option(False, "--store-positions/--no-store-positions"),
-    license: str = typer.Option("unknown", "--license", help="Dataset license."),
-    source_url: str | None = typer.Option(None, "--source-url", help="Original source URL."),
-    citation: str | None = typer.Option(None, "--citation", help="Citation or DOI."),
-    run_id: list[str] | None = typer.Option(None, "--run-id", help="Run ID. Repeat once for each --trajectory."),
-    trajectory_id: list[str] | None = typer.Option(None, "--trajectory-id", help="Trajectory ID. Repeat once for each --trajectory."),
-    simulation_engine: str | None = typer.Option(None, "--simulation-engine", help="MD engine, e.g. NAMD or GROMACS."),
-    force_field: str | None = typer.Option(None, "--force-field", help="Force field name."),
-    solvent: str | None = typer.Option(None, "--solvent", help="Solvent description."),
-    ensemble: str | None = typer.Option(None, "--ensemble", help="Simulation ensemble."),
-    organism: str | None = typer.Option(None, "--organism", help="Organism tag."),
-    protein: str | None = typer.Option(None, "--protein", help="Protein target tag."),
-    system_type: str | None = typer.Option(None, "--system-type", help="System type tag."),
-    overwrite: bool = typer.Option(False, "--overwrite"),
+def init(
+    project_root: Path = typer.Argument(Path("."), help="Project directory to initialize."),
+    overwrite: bool = typer.Option(False, "--overwrite", help="Replace an existing mddatanet.yaml."),
 ) -> None:
-    """Create an initial package from raw MD files."""
+    """Create an MDDataNet project descriptor."""
 
     try:
-        print_step(1, 4, "Loading topology and trajectory...")
-        result = convert_package(
+        path = init_workspace(project_root, overwrite=overwrite)
+        print_success(str(path))
+        _next("edit mddatanet.yaml, then run `mddatanet inspect --topology system.pdb --trajectory run.dcd`.")
+    except MDDataNetError as exc:
+        _fail(exc.display_message())
+
+
+@app.command()
+def inspect(
+    project_root: Path | None = typer.Argument(None, help="Prepared project directory to summarize."),
+    topology: Path | None = typer.Option(None, "--topology", exists=False, help="Topology file for source inspection."),
+    trajectory: list[Path] | None = typer.Option(None, "--trajectory", help="Trajectory file. Repeat for multiple runs."),
+    coordinates: Path | None = typer.Option(None, "--coordinates", help="Optional coordinate file."),
+) -> None:
+    """Inspect source files or a prepared MDDataNet workspace."""
+
+    try:
+        if topology is not None:
+            summary = inspect_source(topology=topology, trajectory=trajectory, coordinates=coordinates)
+        else:
+            summary = workspace_summary(project_root or Path("."))
+        _print_mapping(summary)
+    except MDDataNetError as exc:
+        _fail(exc.display_message())
+
+
+@app.command()
+def prepare(
+    project_root: Path = typer.Argument(Path("."), help="Project directory with mddatanet.yaml."),
+    topology: Path = typer.Option(..., "--topology", exists=False, help="Topology file."),
+    trajectory: list[Path] | None = typer.Option(None, "--trajectory", help="Trajectory file. Repeat for multiple runs."),
+    coordinates: Path | None = typer.Option(None, "--coordinates", help="Optional coordinate file."),
+    chunk_size: int = typer.Option(5000, "--chunk-size", min=1, help="Frames per Ray worker shard."),
+    keep_solvent: bool = typer.Option(False, "--keep-solvent", help="Keep water/solvent atoms."),
+    atom_selection: str | None = typer.Option(None, "--atom-selection", help="MDAnalysis atom selection override."),
+    stride: int = typer.Option(1, "--stride", min=1, help="Store every Nth frame."),
+    start: int | None = typer.Option(None, "--start", help="First source frame."),
+    stop: int | None = typer.Option(None, "--stop", help="Stop source frame, exclusive."),
+    ray_address: str | None = typer.Option(None, "--ray-address", help="Existing Ray cluster address."),
+    overwrite: bool = typer.Option(False, "--overwrite", help="Replace .mddn_cache."),
+) -> None:
+    """Convert raw MD files into Ray-written per-frame Parquet shards."""
+
+    try:
+        cache = prepare_workspace(
+            project_root=project_root,
             topology=topology,
             trajectory=trajectory,
             coordinates=coordinates,
-            name=name,
-            description=description,
-            out=out,
-            run_id=run_id,
-            simulation_engine=simulation_engine,
-            force_field=force_field,
-            solvent=solvent,
-            ensemble=ensemble,
-            organism=organism,
-            protein=protein,
-            system_type=system_type,
+            chunk_size=chunk_size,
+            keep_solvent=keep_solvent,
+            atom_selection=atom_selection,
             stride=stride,
             start=start,
             stop=stop,
-            chunk_size=chunk_size,
-            store_positions=store_positions,
-            data_mode=data_mode,
-            storage_profile=storage_profile,
-            no_coordinates=no_coordinates,
-            coordinate_dtype=coordinate_dtype,
-            compression=compression,
-            chunk_frames=chunk_frames,
-            chunk_atoms=chunk_atoms,
-            coordinate_precision=coordinate_precision,
-            coordinates_url=coordinates_url,
-            coordinates_sha256=coordinates_sha256,
-            topology_url=topology_url,
-            topology_sha256=topology_sha256,
-            trajectory_id=trajectory_id,
-            license=license,
-            source_url=source_url,
-            citation=citation,
+            ray_address=ray_address,
             overwrite=overwrite,
-            command=_command_string(),
         )
-        print_step(4, 4, "Package written.")
-        print_success(str(result))
-        _next(f"Run `mddatanet analyze --input {result} --preset ligand_unbinding --ligand 'resname LIG' --pocket protein --out labeled.mddatanet`.")
-    except MDDataNetError as exc:
-        _fail(exc.display_message())
-
-
-@app.command()
-def featurize(
-    input_path: Path = typer.Option(..., "--input", help="Input package."),
-    features: Path = typer.Option(..., "--features", help="Feature YAML."),
-    out: Path = typer.Option(..., "--out", help="Output package."),
-    chunk_size: int = typer.Option(100, "--chunk-size", help="Processing chunk size (frames)."),
-    overwrite: bool = typer.Option(False, "--overwrite"),
-) -> None:
-    """Add trajectory-derived features to a package."""
-
-    try:
-        print_step(1, 4, "Loading feature config...")
-        result = featurize_package(
-            input_path=input_path,
-            features_path=features,
-            out=out,
-            chunk_size=chunk_size,
-            overwrite=overwrite,
-            command=_command_string(),
-        )
-        print_step(4, 4, "Features written.")
-        print_success(str(result))
-        _next(f"Run `mddatanet label --input {result} --events events.yaml --out labeled.mddatanet`.")
-    except MDDataNetError as exc:
-        _fail(exc.display_message())
-
-
-@app.command()
-def label(
-    input_path: Path = typer.Option(..., "--input", help="Input package."),
-    out: Path = typer.Option(..., "--out", help="Output package."),
-    events: Path | None = typer.Option(None, "--events", help="Custom event YAML."),
-    preset: str | None = typer.Option(None, "--preset", help="Built-in preset name."),
-    param: list[str] | None = typer.Option(None, "--param", help="Preset parameter override key=value."),
-    reference: Path | None = typer.Option(None, "--reference", help="Reference structure for presets."),
-    ligand: str | None = typer.Option(None, "--ligand", help="Ligand atom selection."),
-    pocket: str | None = typer.Option(None, "--pocket", help="Pocket/protein atom selection."),
-    selection_a: str | None = typer.Option(None, "--selection-a", help="Generic selection A."),
-    selection_b: str | None = typer.Option(None, "--selection-b", help="Generic selection B."),
-    overwrite: bool = typer.Option(False, "--overwrite"),
-) -> None:
-    """Generate event labels from existing feature arrays."""
-
-    try:
-        print_step(1, 4, "Resolving events...")
-        result = label_package(
-            input_path=input_path,
-            out=out,
-            events_path=events,
-            preset=preset,
-            preset_args={
-                "reference": str(reference) if reference is not None else None,
-                "ligand": ligand,
-                "pocket": pocket,
-                "selection_a": selection_a,
-                "selection_b": selection_b,
-            },
-            param_overrides=_parse_params(param or []),
-            overwrite=overwrite,
-            command=_command_string(),
-        )
-        print_step(4, 4, "Labels written.")
-        print_success(str(result))
-        _next(f"Run `mddatanet split --input {result} --strategy temporal --out ready.mddatanet`.")
+        print_success(str(cache))
+        _next(f"run `mddatanet analyze {project_root} --preset ligand_unbinding --ligand 'resname LIG' --pocket protein`.")
     except MDDataNetError as exc:
         _fail(exc.display_message())
 
 
 @app.command()
 def analyze(
-    input_path: Path = typer.Option(..., "--input", help="Input package."),
-    out: Path = typer.Option(..., "--out", help="Output package."),
+    project_root: Path = typer.Argument(Path("."), help="Prepared project directory."),
     preset: str | None = typer.Option(None, "--preset", help="Built-in preset name."),
-    preset_yaml: Path | None = typer.Option(None, "--preset-yaml", help="User preset YAML."),
-    param: list[str] | None = typer.Option(None, "--param", help="Preset parameter override key=value."),
+    custom_script: Path | None = typer.Option(None, "--custom-script", help="Python script with a custom metric function."),
+    func: str | None = typer.Option(None, "--func", help="Custom metric function name."),
+    primary_metric: str | None = typer.Option(None, "--primary-metric", help="Primary metric column name."),
+    param: list[str] | None = typer.Option(None, "--param", help="Metric/event override key=value."),
     ligand: str | None = typer.Option(None, "--ligand", help="Ligand atom selection."),
     pocket: str | None = typer.Option(None, "--pocket", help="Pocket/protein atom selection."),
-    selection_a: str | None = typer.Option(None, "--selection-a", help="Generic selection A."),
-    selection_b: str | None = typer.Option(None, "--selection-b", help="Generic selection B."),
-    reference: Path | None = typer.Option(None, "--reference", help="Reference structure."),
-    horizon_frames: int | None = typer.Option(None, "--horizon-frames", help="Override preset horizon."),
-    overwrite: bool = typer.Option(False, "--overwrite"),
-    overwrite_feature: bool = typer.Option(False, "--overwrite-feature", help="Reserved for conflicting feature configs."),
 ) -> None:
-    """Run a built-in or user preset analysis in one step."""
+    """Calculate frame-aligned metrics and operational event labels."""
 
-    del overwrite_feature
-    overrides = _parse_params(param or [])
-    if horizon_frames is not None:
-        overrides["horizon_frames"] = horizon_frames
     try:
-        print_step(1, 4, "Resolving preset analysis...")
-        result = label_package(
-            input_path=input_path,
-            out=out,
+        cache = analyze_workspace(
+            project_root=project_root,
             preset=preset,
-            preset_yaml=preset_yaml,
-            preset_args={
-                "reference": str(reference) if reference is not None else None,
-                "ligand": ligand,
-                "pocket": pocket,
-                "selection_a": selection_a,
-                "selection_b": selection_b,
-            },
-            param_overrides=overrides,
-            overwrite=overwrite,
-            command=_command_string(),
+            custom_script=custom_script,
+            func=func,
+            primary_metric=primary_metric,
+            ligand=ligand,
+            pocket=pocket,
+            param_overrides=_parse_params(param or []),
         )
-        print_step(4, 4, "Analysis labels written.")
-        print_success(str(result))
-        _next(f"Run `mddatanet split --input {result} --strategy temporal --out ready.mddatanet`.")
+        print_success(str(cache))
+        _next(f"run `mddatanet package {project_root}` or add interval labels with `mddatanet tag`.")
     except MDDataNetError as exc:
         _fail(exc.display_message())
 
 
 @app.command()
-def split(
-    input_path: Path = typer.Option(..., "--input", help="Input package."),
-    out: Path = typer.Option(..., "--out", help="Output package."),
-    strategy: str = typer.Option("temporal", "--strategy", help="temporal, random_window, or trajectory."),
-    train: float = typer.Option(0.7, "--train"),
-    val: float = typer.Option(0.15, "--val"),
-    test: float = typer.Option(0.15, "--test"),
-    gap: int = typer.Option(0, "--gap"),
-    seed: int | None = typer.Option(None, "--seed"),
-    overwrite: bool = typer.Option(False, "--overwrite"),
+def tag(
+    project_root: Path = typer.Argument(Path("."), help="Prepared project directory."),
+    event: str = typer.Option(..., "--event", help="Allowed event name from mddatanet.yaml."),
+    start_frame: int = typer.Option(..., "--start-frame", min=0),
+    end_frame: int = typer.Option(..., "--end-frame", min=1),
+    confidence: float = typer.Option(1.0, "--confidence"),
 ) -> None:
-    """Create train/validation/test split arrays."""
+    """Inject an explicit biological event interval."""
 
     try:
-        print_step(1, 4, "Creating split arrays...")
-        result = split_package(
-            input_path=input_path,
-            out=out,
-            strategy=strategy,
-            train=train,
-            val=val,
-            test=test,
-            gap=gap,
-            seed=seed,
-            overwrite=overwrite,
+        cache = tag_workspace(
+            project_root=project_root,
+            event=event,
+            start_frame=start_frame,
+            end_frame=end_frame,
+            confidence=confidence,
         )
-        print_step(4, 4, "Splits written.")
-        print_success(str(result))
-        _next(f"Run `mddatanet validate {result}` and then `mddatanet inspect {result} --labels --splits`.")
+        print_success(str(cache))
+        _next(f"run `mddatanet package {project_root}`.")
     except MDDataNetError as exc:
         _fail(exc.display_message())
 
 
 @app.command()
-def validate(
-    package: Path = typer.Argument(..., help="Package directory or .mddatanet.zip."),
-    no_checksums: bool = typer.Option(False, "--no-checksums", help="Skip checksum validation."),
+def package(
+    project_root: Path = typer.Argument(Path("."), help="Project directory to package."),
+    train_frac: float = typer.Option(0.8, "--train-frac"),
+    validation_frac: float = typer.Option(0.1, "--validation-frac"),
+    test_frac: float = typer.Option(0.1, "--test-frac"),
+    hf_repo_link: str = typer.Option("", "--hf-repo-link", help="Repo link to place in metadata_index."),
 ) -> None:
-    """Validate package correctness."""
+    """Finalize official train/validation/test and metadata_index Parquet splits."""
 
-    result = validate_package(package, check_checksums=not no_checksums)
-    for check in result.checks:
-        console.print(f"✓ {check}")
-    for warning in result.warnings:
-        console.print(f"! {warning}")
-    for error in result.errors:
-        console.print(f"✗ {error}")
-    for suggestion in result.suggestions:
-        console.print(f"  → Suggestion: {suggestion}")
-    if not result.ok:
+    try:
+        cache = package_workspace(
+            project_root=project_root,
+            train_frac=train_frac,
+            validation_frac=validation_frac,
+            test_frac=test_frac,
+            hf_repo_link=hf_repo_link,
+        )
+        print_success(str(cache))
+        _next(f"run `mddatanet validate {project_root}` then `mddatanet publish {project_root} --repo-id USER/DATASET`.")
+    except MDDataNetError as exc:
+        _fail(exc.display_message())
+
+
+@app.command()
+def validate(project_root: Path = typer.Argument(Path("."), help="Project directory to validate.")) -> None:
+    """Validate the MDDataNet workspace and write validation_report.json."""
+
+    errors = validate_workspace(project_root)
+    if errors:
+        for error in errors:
+            console.print(f"✗ {error}")
         raise typer.Exit(1)
-    console.print("Package is valid.")
-    _next(f"Run `mddatanet inspect {package} --features --labels --splits` or `mddatanet export-manifest {package} --out hub_dataset_dir`.")
+    console.print("MDDataNet workspace is valid.")
 
 
 @app.command()
-def inspect(
-    input_path: Path = typer.Argument(..., help="Package directory or .mddatanet.zip."),
-    features: bool = typer.Option(False, "--features", help="Show detailed features."),
-    labels: bool = typer.Option(False, "--labels", help="Show detailed labels."),
-    splits: bool = typer.Option(False, "--splits", help="Show detailed splits."),
-    json_output: bool = typer.Option(False, "--json", help="Print JSON output."),
+def publish(
+    project_root: Path = typer.Argument(Path("."), help="Packaged project directory."),
+    repo_id: str = typer.Option(..., "--repo-id", help="Hugging Face dataset repo ID."),
+    private: bool = typer.Option(False, "--private", help="Create or update a private dataset repo."),
+    token: str | None = typer.Option(None, "--token", help="Hugging Face token; defaults to local login."),
+    dry_run_out: Path | None = typer.Option(None, "--dry-run-out", help="Copy upload files locally instead of uploading."),
 ) -> None:
-    """Print a human-readable package summary."""
-
-    summary = inspect_package(
-        input_path,
-        include_features=features,
-        include_labels=labels,
-        include_splits=splits,
-    )
-    console.print(format_inspection_json(summary) if json_output else format_inspection(summary))
-    if not json_output:
-        _next("Run `mddatanet validate PACKAGE` before sharing, or `mddatanet export-manifest PACKAGE --out hub_dataset_dir` for Hub registry metadata.")
-
-
-@app.command()
-def pack(
-    source: Path = typer.Argument(..., help="Unpacked .mddatanet directory."),
-    output: Path = typer.Argument(..., help="Output .mddatanet.zip."),
-    overwrite: bool = typer.Option(False, "--overwrite"),
-) -> None:
-    """Pack an unpacked package directory."""
+    """Publish finalized Parquet assets to Hugging Face."""
 
     try:
-        print_step(1, 2, "Packing package...")
-        packed = pack_package(source, output, overwrite=overwrite)
-        print_step(2, 2, "Packed output.")
-        print_success(str(packed))
-        _next(f"Run `mddatanet validate {packed}`.")
-    except MDDataNetError as exc:
-        _fail(exc.display_message())
-
-
-@app.command()
-def unpack(
-    package: Path = typer.Argument(..., help="Input .mddatanet.zip."),
-    out: Path = typer.Option(..., "--out", help="Output directory."),
-    overwrite: bool = typer.Option(False, "--overwrite"),
-) -> None:
-    """Unpack a package zip."""
-
-    try:
-        print_step(1, 2, "Unpacking package...")
-        unpacked = unpack_package(package, out, overwrite=overwrite)
-        print_step(2, 2, "Unpacked output.")
-        print_success(str(unpacked))
-        _next(f"Run `mddatanet inspect {unpacked}` or continue processing the unpacked directory.")
-    except MDDataNetError as exc:
-        _fail(exc.display_message())
-
-
-@app.command("split-package")
-def split_package_command(
-    input_path: Path = typer.Option(..., "--input", help="Input trajectory-first package."),
-    out_labels: Path = typer.Option(..., "--out-labels", help="Output labels .mddatanet.zip."),
-    out_coordinates: Path = typer.Option(..., "--out-coordinates", help="Output coordinates .zarr.zip."),
-    overwrite: bool = typer.Option(False, "--overwrite"),
-) -> None:
-    """Split labels/metadata from coordinates for Hub-scale distribution."""
-
-    try:
-        labels_path, coordinates_path = split_package_for_hub(
-            input_path=input_path,
-            out_labels=out_labels,
-            out_coordinates=out_coordinates,
-            overwrite=overwrite,
-        )
-        print_success(f"{labels_path} and {coordinates_path}")
-        _next(f"Share {labels_path} for metadata/labels and keep {coordinates_path} available for coordinate training.")
-    except MDDataNetError as exc:
-        _fail(exc.display_message())
-
-
-@app.command()
-def card(
-    input_path: Path = typer.Option(..., "--input", help="Input package."),
-    out: Path = typer.Option(..., "--out", help="Output package."),
-    overwrite: bool = typer.Option(False, "--overwrite"),
-) -> None:
-    """Generate or refresh dataset_card.md."""
-
-    try:
-        workspace = PackageWorkspace(input_path, out, overwrite=overwrite)
-        with workspace as work_dir:
-            metadata = read_metadata(work_dir)
-            provenance = read_provenance(work_dir)
-            write_dataset_card(work_dir, metadata, provenance)
-            write_checksums(work_dir)
-            workspace.finalize()
-            print_success(str(out))
-            _next(f"Run `mddatanet inspect {out}` to review the refreshed dataset card context.")
-    except MDDataNetError as exc:
-        _fail(exc.display_message())
-
-
-@app.command("export-manifest")
-def export_manifest_command(
-    package: Path = typer.Argument(..., help="Input .mddatanet.zip or .mddatanet directory."),
-    out: Path = typer.Option(..., "--out", help="Output Hub registry directory."),
-    download_url: str | None = typer.Option(None, "--download-url", help="External package download URL."),
-    dataset_id: str | None = typer.Option(None, "--dataset-id", help="Hub dataset ID."),
-    verify_download: bool = typer.Option(False, "--verify-download", help="Check external URL metadata."),
-    overwrite: bool = typer.Option(False, "--overwrite"),
-) -> None:
-    """Export Hub-ready metadata registry files."""
-
-    try:
-        result = export_manifest(
-            package,
-            out=out,
-            download_url=download_url,
-            dataset_id=dataset_id,
-            verify_download=verify_download,
-            overwrite=overwrite,
+        result = publish_workspace(
+            project_root=project_root,
+            repo_id=repo_id,
+            private=private,
+            token=token,
+            dry_run_out=dry_run_out,
         )
         print_success(str(result))
-        _next("Upload the package file to external storage, then add this registry folder to the future mddatanet-hub PR.")
     except MDDataNetError as exc:
         _fail(exc.display_message())
+
+
+@app.command()
+def load(
+    repo_id: str = typer.Argument(..., help="Hugging Face dataset repo ID."),
+    split: str = typer.Option("train", "--split"),
+    streaming: bool = typer.Option(True, "--streaming/--no-streaming"),
+) -> None:
+    """Load a Hugging Face dataset through datasets.load_dataset."""
+
+    try:
+        dataset = load_hf_dataset(repo_id, split=split, streaming=streaming)
+        console.print(dataset)
+    except MDDataNetError as exc:
+        _fail(exc.display_message())
+
+
+@app.command()
+def benchmark(
+    name: str | None = typer.Argument(None, help="Benchmark name to show."),
+    load_dataset_flag: bool = typer.Option(False, "--load", help="Load the benchmark with datasets."),
+    split: str = typer.Option("train", "--split"),
+) -> None:
+    """List or load pinned MDDataNet benchmark repositories."""
+
+    benchmarks = benchmark_registry()
+    if name is None:
+        for item in benchmarks:
+            console.print(f"{item['name']}: {item['repo_id']} ({item['task']})")
+        return
+    matches = [item for item in benchmarks if item["name"] == name]
+    if not matches:
+        _fail(f"Unknown benchmark: {name}")
+    item = matches[0]
+    if load_dataset_flag:
+        dataset = load_hf_dataset(item["repo_id"], split=split, streaming=True)
+        console.print(dataset)
+    else:
+        _print_mapping(item)
 
 
 @app.command()
@@ -432,7 +264,7 @@ def demo(
     out_dir: Path = typer.Option(Path("outputs"), "--out-dir", help="Directory for generated demo output."),
     overwrite: bool = typer.Option(True, "--overwrite/--no-overwrite", help="Overwrite existing demo output."),
 ) -> None:
-    """Run a complete demonstration pipeline."""
+    """Run a generated HF-native ligand-unbinding demo."""
 
     if name == "alanine":
         console.print("The alanine demo is not implemented yet; running ligand_unbinding instead.")
@@ -450,9 +282,6 @@ def presets_list() -> None:
     """List built-in event presets."""
 
     categories = preset_registry.categories()
-    if not categories:
-        console.print("No built-in presets are currently available.")
-        return
     for category, names in categories.items():
         console.print(f"{category}:")
         for name in names:
@@ -484,34 +313,6 @@ def presets_validate_yaml(preset_file: Path) -> None:
         _fail(exc.display_message())
 
 
-@app.command("export-schema")
-def export_schema(
-    out_dir: Path = typer.Option(Path("schemas"), "--out-dir", help="Directory to write schemas."),
-) -> None:
-    """Export package format JSON Schemas."""
-
-    import json
-    from mddatanet.format.schema import Metadata, Provenance, FeatureConfig, EventConfig, SplitManifest
-    from mddatanet.hub.manifest import HubDownload, HubManifest
-    
-    out_dir.mkdir(parents=True, exist_ok=True)
-    models = {
-        "metadata": Metadata,
-        "provenance": Provenance,
-        "feature_config": FeatureConfig,
-        "events": EventConfig,
-        "splits": SplitManifest,
-        "hub_manifest": HubManifest,
-        "hub_download": HubDownload,
-    }
-    
-    for name, model in models.items():
-        schema = model.model_json_schema()
-        path = out_dir / f"{name}.schema.json"
-        path.write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8")
-        console.print(f"Exported {path}")
-
-
 @presets_app.command("explain")
 def presets_explain(name: str) -> None:
     """Explain a preset scientifically and computationally."""
@@ -521,6 +322,11 @@ def presets_explain(name: str) -> None:
     except MDDataNetError as exc:
         _fail(exc.display_message())
     console.print(preset.get("description", f"No explanation available for {name}."))
+
+
+def _print_mapping(data: dict[str, object]) -> None:
+    for key, value in data.items():
+        console.print(f"{key}: {value}")
 
 
 def _parse_params(params: list[str]) -> dict[str, object]:
@@ -545,10 +351,6 @@ def _coerce_param(value: str) -> object:
         return value
 
 
-def _command_string() -> str:
-    return " ".join(sys.argv)
-
-
 def _next(message: str) -> None:
     console.print(f"What's next? {message}")
 
@@ -556,6 +358,10 @@ def _next(message: str) -> None:
 def _fail(message: str) -> None:
     print_error(message)
     raise typer.Exit(1)
+
+
+def _command_string() -> str:
+    return " ".join(sys.argv)
 
 
 if __name__ == "__main__":

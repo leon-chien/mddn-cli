@@ -2,70 +2,50 @@
 
 ## `No module named pip`
 
-Your Python environment does not have `pip`.
+Install pip inside the active Conda environment:
 
 ```bash
-python -m ensurepip --upgrade
+conda install pip
+```
+
+Then reinstall:
+
+```bash
 python -m pip install -e ".[dev]"
 ```
 
-In Conda environments, `conda install pip` is also fine.
+## Ray Cannot Start
+
+`mddatanet prepare` requires Ray. Install dependencies with:
+
+```bash
+python -m pip install -e ".[dev]"
+```
+
+On restricted macOS sandboxes, Ray process inspection can be blocked. MDDataNet
+falls back to an in-process worker path only for that permission failure so tests
+and demos can still run. Normal user environments should use Ray workers.
 
 ## Invalid Selection
 
-Example:
+Use MDAnalysis selection syntax. For the MVP, common selections include:
 
 ```text
-selection 'resid 42 and name CA' matched 0 atoms
+protein
+resname LIG
+name CA
 ```
 
-Check that the topology contains the residue/atom names you expect. MDDataNet
-uses MDAnalysis selection syntax.
+## Forces Are Missing
 
-## Topology And Trajectory Mismatch
+Many trajectory formats do not store forces. MDDataNet records `has_forces:
+false` and writes null force tensors. It does not synthesize zeros.
 
-If conversion fails because atom counts do not match, confirm that all
-trajectories share the same topology and atom ordering. Multi-run packages
-currently require one compatible system.
+## Old Commands Are Gone
 
-## Missing Raw Files During Featurization
+The public CLI no longer exposes `convert`, `push-to-hub`, `split`, `pack`,
+`unpack`, or `export-manifest`. Use:
 
-Current packages store compressed trajectory coordinates by default. If you
-created a `features-only`, `--no-coordinates`, or `linked` package,
-featurization may need the original raw files recorded in provenance. Restore
-those files or rerun with embedded coordinates:
-
-```bash
-mddatanet convert ... --data-mode hybrid --storage-profile compressed
+```text
+init -> prepare -> analyze/tag -> package -> validate -> publish
 ```
-
-For very large Hub datasets, use `--storage-profile linked` and make sure
-`download.yaml` contains coordinate URLs and checksums.
-
-## Units And PBC
-
-MDDataNet records distances as Angstrom and times as picoseconds when available
-through MDAnalysis. Periodic boundary behavior depends on unit-cell information
-being present in the trajectory.
-
-## Huge Files
-
-Use unpacked `.mddatanet/` directories during active processing. Packing to zip
-is best for sharing or archiving.
-
-For Hub-scale sharing, use either `--storage-profile linked` or:
-
-```bash
-mddatanet split-package --input ready.mddatanet.zip --out-labels dataset.labels.mddatanet.zip --out-coordinates dataset.coordinates.zarr.zip
-```
-
-## Validation Fails After Manual Edits
-
-Run:
-
-```bash
-mddatanet validate package.mddatanet --no-checksums
-```
-
-If validation then passes, regenerate checksums by rerunning the relevant
-MDDataNet command or repacking the package.

@@ -1,19 +1,13 @@
 # MDDataNet
 
-MDDataNet converts molecular dynamics simulations into standardized, labeled,
-machine-learning-ready dataset packages.
+MDDataNet is a Hugging Face-native CLI for turning molecular dynamics
+trajectories into streaming-ready ML datasets.
 
-It reads MDAnalysis-compatible topology and trajectory files, stores standardized
-trajectory/topology data in chunked Zarr, applies reproducible event rules or
-presets, creates future-event labels and train/validation/test splits, validates
-the result, and writes a shareable `.mddatanet.zip` package.
-
-The CLI is the package-building side of the MDDataNet ecosystem. The
-[MDDataNet Hub](https://github.com/leon-chien/mddn-hub) is the metadata
-registry for discovering validated packages: the CLI creates `.mddatanet.zip`
-archives, users upload those archives to external storage, the Hub stores
-metadata and download links, and downstream users download packages to train
-with `MDDataNetDataset`.
+It reads MDAnalysis-compatible topology and trajectory files, filters atoms,
+writes per-frame coordinate/force tensors to Parquet, computes frame-aligned
+metrics and event labels, creates train/validation/test splits plus a lightweight
+`metadata_index`, validates the workspace, and publishes directly to Hugging Face
+Datasets.
 
 ## Install
 
@@ -21,193 +15,85 @@ with `MDDataNetDataset`.
 python -m pip install -e ".[dev]"
 ```
 
-If your environment does not have `pip`, install it first with:
-
-```bash
-python -m ensurepip --upgrade
-```
+Ray is a required dependency for the `prepare` command.
 
 ## Five-Minute Demo
 
 ```bash
 mddatanet demo
-mddatanet inspect outputs/ligand_unbinding_demo.mddatanet.zip --labels
-mddatanet validate outputs/ligand_unbinding_demo.mddatanet.zip
+mddatanet validate outputs/ligand_unbinding_demo_hf
+mddatanet inspect outputs/ligand_unbinding_demo_hf
 ```
 
-The demo generates a tiny synthetic protein-ligand trajectory at runtime. It
-does not commit example datasets or config templates to the repo.
+The demo generates a tiny ligand-unbinding trajectory at runtime, prepares
+per-frame Parquet shards, applies the ligand-unbinding analysis, packages local
+Hugging Face split files, and performs a no-network publish dry run.
 
-Python loader smoke test:
-
-```python
-from mddatanet import MDDataNetDataset
-
-ds = MDDataNetDataset(
-    "outputs/ligand_unbinding_demo.mddatanet.zip",
-    window_length=2,
-    target="ligand_unbinding_future_2",
-)
-
-item = ds[0]
-print(item["coordinates"].shape)
-print(item["label"], item["valid"])
-```
-
-## Common Workflow
+## Main Workflow
 
 ```bash
-mddatanet convert \
-  --topology system.psf \
-  --coordinates system.pdb \
-  --trajectory run.dcd \
-  --name kinase_ligand_run1 \
-  --system-type protein_ligand \
-  --out kinase_raw.mddatanet
+mddatanet init my_project
 
-mddatanet analyze \
-  --input kinase_raw.mddatanet \
+mddatanet inspect \
+  --topology system.pdb \
+  --trajectory trajectory.dcd
+
+mddatanet prepare my_project \
+  --topology system.pdb \
+  --trajectory trajectory.dcd \
+  --chunk-size 5000
+
+mddatanet analyze my_project \
   --preset ligand_unbinding \
   --ligand "resname LIG" \
   --pocket "protein" \
-  --param distance_threshold=15.0 \
-  --param horizon_frames=500 \
-  --out kinase_labeled.mddatanet
+  --param distance_threshold=15.0
 
-mddatanet split \
-  --input kinase_labeled.mddatanet \
-  --strategy temporal \
-  --gap 100 \
-  --out kinase_ready.mddatanet.zip
+mddatanet tag my_project \
+  --event ligand_unbinding \
+  --start-frame 1000 \
+  --end-frame 1300
 
-mddatanet validate kinase_ready.mddatanet.zip
-mddatanet inspect kinase_ready.mddatanet.zip --features --labels --splits
+mddatanet package my_project --hf-repo-link USER/my-dataset
+mddatanet validate my_project
+mddatanet publish my_project --repo-id USER/my-dataset
 ```
 
-For huge active work, prefer unpacked `.mddatanet/` directories. Use
-`.mddatanet.zip` for sharing, archiving, and Hub manifest export.
-
-By default, `convert` writes `hybrid + compressed` packages: coordinates are
-stored under `dataset.zarr/trajectory/positions` as chunked, compressed
-`float32` arrays. Use `--storage-profile linked` with coordinate URLs and
-checksums for huge Hub-scale packages where coordinates live outside the
-`.mddatanet.zip`.
-
-## Hub Registry Export
-
-`mddatanet export-manifest` writes a Hub-ready registry folder that can be
-copied into `mddn-hub/datasets/<dataset_name>/`:
+For a no-network publish smoke test:
 
 ```bash
-mddatanet export-manifest kinase_ready.mddatanet.zip \
-  --out kinase_ligand_unbinding_v1
+mddatanet publish my_project \
+  --repo-id USER/my-dataset \
+  --dry-run-out /tmp/mddatanet_upload_preview
 ```
 
-The folder contains Hub-schema `metadata.json`, `manifest.json`,
-`download.yaml`, `checksums.json`, `dataset_card.md`, and label/metric files
-when available. If `--download-url` is omitted, the exporter writes a
-schema-valid placeholder URL so the folder can pass Hub validation before the
-real external storage URL is known.
-
-The intended handoff is:
-
-1. Use this CLI to create and validate a `.mddatanet.zip` package.
-2. Upload the package to external storage such as Hugging Face Datasets, Zenodo,
-   S3/R2, GCS, or institutional storage.
-3. Run `mddatanet export-manifest` with the package URL or replace the
-   placeholder URL in `download.yaml`.
-4. Submit the metadata folder to the
-   [MDDataNet Hub](https://github.com/leon-chien/mddn-hub).
-5. Users read the Hub metadata, download and verify the package, then train with
-   `MDDataNetDataset`.
-
-The Hub stores metadata, download links, checksums, dataset cards, and benchmark
-semantics. It does not host large trajectories or `.mddatanet.zip` archives.
-
-## Create A Hub-Ready Dataset
-
-For a quick proof, start with the runtime demo:
-
-```bash
-mddatanet demo --out-dir outputs
-mddatanet validate outputs/ligand_unbinding_demo.mddatanet.zip
-mddatanet inspect outputs/ligand_unbinding_demo.mddatanet.zip --features --labels --splits
-```
-
-For a real dataset, follow the same shape as the common workflow above:
-convert raw MD, analyze or label it with reproducible rules, split it with a
-leakage-aware policy, and validate the final `.mddatanet.zip`.
-
-Upload the package to external storage before curation:
+## Local Workspace
 
 ```text
-outputs/ligand_unbinding_demo.mddatanet.zip
-  -> Hugging Face Datasets, Zenodo, S3/R2, GCS, or institutional storage
+project_root/
+  mddatanet.yaml
+  .mddn_cache/
+    mddatanet.json
+    dataset_card.md
+    validation_report.json
+    data/
+      train-00000-of-00001.parquet
+      validation-00000-of-00001.parquet
+      test-00000-of-00001.parquet
+    metadata_index/
+      index-00000-of-00001.parquet
 ```
 
-Then export the metadata folder for
-[MDDataNet Hub](https://github.com/leon-chien/mddn-hub):
+## What MDDataNet Is Not
 
-```bash
-mddatanet export-manifest outputs/ligand_unbinding_demo.mddatanet.zip \
-  --out ligand_unbinding_demo_from_cli \
-  --dataset-id ligand_unbinding_demo_from_cli \
-  --download-url https://example.org/ligand_unbinding_demo.mddatanet.zip
-```
+MDDataNet is not an MD simulation engine, not a custom archive registry, and no
+longer targets `.mddatanet.zip` as the final product format. Hugging Face
+Datasets is the storage and discovery layer.
 
-Submit only the exported metadata folder to the Hub:
-
-```text
-mddn-hub/
-  datasets/
-    ligand_unbinding_demo_from_cli/
-      metadata.json
-      manifest.json
-      download.yaml
-      checksums.json
-      dataset_card.md
-```
-
-The CLI does not host packages, upload data, or automate pull requests. It
-creates ML-ready packages and exports the metadata that the Hub validates and
-indexes.
-
-After a Hub entry is merged, users read `download.yaml`, download and verify the
-package, then train with the Python loader:
-
-```python
-from mddatanet import MDDataNetDataset
-
-dataset = MDDataNetDataset(
-    "ligand_unbinding_demo.mddatanet.zip",
-    window_length=2,
-    target="ligand_unbinding_future_2",
-)
-```
-
-## Documentation
+## Docs
 
 - [Quickstart](docs/quickstart.md)
-- [Current CLI status](docs/current_cli_status.md)
-- [Command reference](docs/command_reference.md)
-- [Feature YAML reference](docs/feature_yaml_reference.md)
-- [Event YAML reference](docs/event_yaml_reference.md)
-- [Preset guide](docs/preset_guide.md)
-- [Package format](docs/package_format.md)
+- [Command Reference](docs/command_reference.md)
+- [Package Format](docs/package_format.md)
+- [Workflows](docs/workflows.md)
 - [Troubleshooting](docs/troubleshooting.md)
-- [Example workflows](docs/workflows.md)
-- [Versioning and releases](docs/versioning.md)
-- [Full build specification](docs/MDDataNet_CLI_Full_Build_Specification.md)
-
-## Development
-
-```bash
-python -m pip install -e ".[dev]"
-python -m pytest
-python -m ruff check src tests
-python -m build
-```
-
-MDDataNet is not an MD simulation engine and does not run NAMD, GROMACS, AMBER,
-OpenMM, or WESTPA. It standardizes reproducible operational labels for ML tasks;
-those labels should not be treated as universal biological truth.

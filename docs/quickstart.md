@@ -2,16 +2,7 @@
 
 ## Install
 
-From a checked-out repo:
-
 ```bash
-python -m pip install -e ".[dev]"
-```
-
-If `python -m pip` fails with `No module named pip`, run:
-
-```bash
-python -m ensurepip --upgrade
 python -m pip install -e ".[dev]"
 ```
 
@@ -19,62 +10,42 @@ python -m pip install -e ".[dev]"
 
 ```bash
 mddatanet demo
+mddatanet validate outputs/ligand_unbinding_demo_hf
+mddatanet inspect outputs/ligand_unbinding_demo_hf
 ```
 
-The demo creates a tiny synthetic protein-ligand trajectory at runtime, converts
-it into an MDDataNet package, applies the `ligand_unbinding` preset, creates
-splits, validates the result, and writes:
+The demo writes:
 
 ```text
-outputs/ligand_unbinding_demo.mddatanet.zip
+outputs/ligand_unbinding_demo_hf/
+  mddatanet.yaml
+  .mddn_cache/
+    mddatanet.json
+    dataset_card.md
+    validation_report.json
+    data/
+    metadata_index/
 ```
 
-Inspect and validate it:
+## Prepare Your Own Data
 
 ```bash
-mddatanet inspect outputs/ligand_unbinding_demo.mddatanet.zip --labels --splits
-mddatanet validate outputs/ligand_unbinding_demo.mddatanet.zip
+mddatanet init my_project
+mddatanet inspect --topology system.pdb --trajectory run.dcd
+mddatanet prepare my_project --topology system.pdb --trajectory run.dcd
+mddatanet analyze my_project --preset ligand_unbinding --ligand "resname LIG" --pocket protein
+mddatanet package my_project
+mddatanet validate my_project
 ```
 
-Smoke-test trajectory-window loading from Python:
-
-```python
-from mddatanet import MDDataNetDataset
-
-ds = MDDataNetDataset(
-    "outputs/ligand_unbinding_demo.mddatanet.zip",
-    window_length=2,
-    target="ligand_unbinding_future_2",
-)
-
-item = ds[0]
-print(item["coordinates"].shape)
-print(item["label"], item["valid"])
-```
-
-The minimal loader returns NumPy/Python dictionaries and skips invalid
-future-label tail frames by default. It intentionally does not require PyTorch.
-
-## Convert Your Own Data
+## Publish
 
 ```bash
-mddatanet convert \
-  --topology system.pdb \
-  --trajectory traj.xtc \
-  --name my_run \
-  --out my_run.mddatanet
+mddatanet publish my_project --repo-id USER/my-dataset
 ```
 
-For PSF-style workflows:
+For a local upload preview:
 
 ```bash
-mddatanet convert \
-  --topology system.psf \
-  --coordinates system.pdb \
-  --trajectory traj.dcd \
-  --name my_run \
-  --out my_run.mddatanet
+mddatanet publish my_project --repo-id USER/my-dataset --dry-run-out /tmp/upload_preview
 ```
-
-Use unpacked `.mddatanet/` directories while processing large trajectories.
-Create `.mddatanet.zip` archives when sharing or exporting manifests.

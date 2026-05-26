@@ -1,144 +1,114 @@
 # Command Reference
 
-## `mddatanet convert`
+MDDataNet is now workspace-first and Hugging Face-native.
 
-Create an initial package from raw MD files.
+## `mddatanet init`
 
-Required:
-
-- `--topology`: topology file such as PDB, PSF, PRMTOP, or GRO.
-- `--name`: dataset name.
-- `--out`: output `.mddatanet/` directory or `.mddatanet.zip`.
-
-Common options:
-
-- `--coordinates`: coordinate file when topology has no coordinates.
-- `--trajectory`: trajectory file; repeat for multiple runs.
-- `--run-id`: run identifier; repeat once for each trajectory.
-- `--trajectory-id`: trajectory identifier; repeat once for each trajectory.
-- `--start`, `--stop`, `--stride`: frame slicing.
-- `--chunk-size`: processing frame chunk size.
-- `--data-mode`: `hybrid`, `trajectory`, or `features-only`; default `hybrid`.
-- `--storage-profile`: `compressed`, `full`, or `linked`; default `compressed`.
-- `--no-coordinates`: omit embedded coordinates.
-- `--coordinate-dtype`: `float32` or `float64`.
-- `--compression`: `zstd`, `blosc-zstd`, or `none`.
-- `--chunk-frames`, `--chunk-atoms`: coordinate chunking controls.
-- `--coordinate-precision`: optional coordinate rounding precision in Angstrom.
-- `--coordinates-url`, `--coordinates-sha256`: required for linked coordinate packages.
-- `--topology-url`, `--topology-sha256`: optional linked topology metadata.
-- `--system-type`, `--simulation-engine`, `--force-field`, `--solvent`,
-  `--ensemble`, `--organism`, `--protein`: metadata tags.
-
-Default conversion writes `dataset.zarr/trajectory/positions` and
-`dataset.zarr/topology/*`. Use `--storage-profile linked` for huge packages
-whose coordinates live in external storage.
-
-## `mddatanet featurize`
-
-Add feature arrays from a feature YAML file.
+Create `mddatanet.yaml`.
 
 ```bash
-mddatanet featurize --input raw.mddatanet --features features.yaml --out features.mddatanet
+mddatanet init my_project
 ```
 
-Features are written to `dataset.zarr/features/{feature_name}`.
-
-## `mddatanet label`
-
-Generate event labels from custom events or a preset.
-
-Preset:
-
-```bash
-mddatanet label --input raw.mddatanet --preset ligand_unbinding --ligand "resname LIG" --pocket "protein" --out labeled.mddatanet
-```
-
-Custom YAML:
-
-```bash
-mddatanet label --input features.mddatanet --events events.yaml --out labeled.mddatanet
-```
-
-Labels are written under `dataset.zarr/labels/{event_name}`.
-
-## `mddatanet analyze`
-
-Run a preset-driven analysis in one step. This is the recommended high-level
-workflow for built-in or user-defined presets.
-
-```bash
-mddatanet analyze --input raw.mddatanet --preset ligand_unbinding --ligand "resname LIG" --pocket protein --out labeled.mddatanet
-mddatanet analyze --input raw.mddatanet --preset-yaml my_preset.yaml --param selection_a="segid A" --param selection_b="segid B" --out labeled.mddatanet
-```
-
-`analyze` resolves the preset, computes missing features, writes labels,
-updates metadata/cards/checksums, and records resolved configs.
-
-## `mddatanet split`
-
-Create split arrays.
-
-```bash
-mddatanet split --input labeled.mddatanet --strategy temporal --gap 100 --out ready.mddatanet
-```
-
-Strategies:
-
-- `temporal`: ordered train/validation/test split.
-- `random_window`: random frame/window split with gap handling.
-- `trajectory`: split by run ID for multi-run packages.
-
-## `mddatanet validate`
-
-Validate structure, schemas, checksums, array lengths, label semantics, runs,
-and splits.
-
-```bash
-mddatanet validate ready.mddatanet.zip
-```
-
-Use `--no-checksums` while debugging intentionally modified packages.
+Fails if the descriptor already exists unless `--overwrite` is passed.
 
 ## `mddatanet inspect`
 
-Print a human-readable or JSON summary.
+Inspect raw MD sources:
 
 ```bash
-mddatanet inspect ready.mddatanet.zip --features --labels --splits
-mddatanet inspect ready.mddatanet.zip --json
+mddatanet inspect --topology system.pdb --trajectory run.dcd
 ```
 
-## Package Utilities
-
-- `mddatanet pack source.mddatanet output.mddatanet.zip`
-- `mddatanet unpack input.mddatanet.zip --out unpacked/`
-- `mddatanet card --input ready.mddatanet --out ready_with_card.mddatanet`
-- `mddatanet export-schema --out-dir schemas`
-- `mddatanet split-package --input ready.mddatanet.zip --out-labels dataset.labels.mddatanet.zip --out-coordinates dataset.coordinates.zarr.zip`
-
-## Demo And Presets
-
-- `mddatanet demo`
-- `mddatanet demo ligand_unbinding`
-- `mddatanet presets list`
-- `mddatanet presets show ligand_unbinding`
-- `mddatanet presets explain ligand_unbinding`
-- `mddatanet presets validate-yaml my_preset.yaml`
-
-## Hub Manifest Export
-
-Export small metadata files for the future Hub registry:
+Or inspect a prepared workspace:
 
 ```bash
-mddatanet export-manifest ready.mddatanet.zip --out hub_dataset_dir
+mddatanet inspect my_project
 ```
 
-The exported folder is shaped for `mddn-hub/datasets/<dataset_name>/` and
-contains Hub-schema files: `metadata.json`, `manifest.json`, `download.yaml`,
-`checksums.json`, `dataset_card.md`, `label_statistics.json`, and
-`baseline_metrics.json` when metrics exist. `citation.bib` is included only
-when citation metadata is present.
+## `mddatanet prepare`
 
-Add `--download-url` after uploading the large package to external storage.
-Use `--verify-download` only when the URL is reachable and should be checked.
+Use Ray workers to convert source trajectory frame ranges into per-frame Parquet
+shards under `.mddn_cache/data/`.
+
+```bash
+mddatanet prepare my_project \
+  --topology system.pdb \
+  --trajectory run.dcd \
+  --chunk-size 5000
+```
+
+Solvent is stripped by default. Use `--keep-solvent` or `--atom-selection`.
+
+## `mddatanet analyze`
+
+Append frame-aligned metrics and operational labels.
+
+```bash
+mddatanet analyze my_project \
+  --preset ligand_unbinding \
+  --ligand "resname LIG" \
+  --pocket protein \
+  --param distance_threshold=15.0
+```
+
+Custom metric:
+
+```bash
+mddatanet analyze my_project --custom-script metric.py --func my_metric
+```
+
+## `mddatanet tag`
+
+Inject explicit interval labels after validating against
+`mddatanet.yaml labels.allowed_events`.
+
+```bash
+mddatanet tag my_project --event ligand_unbinding --start-frame 1000 --end-frame 1300
+```
+
+## `mddatanet package`
+
+Create official Hugging Face split files and `metadata_index`.
+
+```bash
+mddatanet package my_project --train-frac 0.8 --validation-frac 0.1 --test-frac 0.1
+```
+
+## `mddatanet validate`
+
+Validate project config, structural manifest, Parquet schemas, frame coverage,
+and metadata index.
+
+```bash
+mddatanet validate my_project
+```
+
+Writes `.mddn_cache/validation_report.json`.
+
+## `mddatanet publish`
+
+Upload finalized assets to Hugging Face.
+
+```bash
+mddatanet publish my_project --repo-id USER/my-dataset
+```
+
+Use `--dry-run-out` to materialize upload files locally without network access.
+
+## `mddatanet load`
+
+Thin wrapper over `datasets.load_dataset`.
+
+```bash
+mddatanet load USER/my-dataset --split train
+```
+
+## `mddatanet benchmark`
+
+List or load pinned benchmark repositories.
+
+```bash
+mddatanet benchmark
+mddatanet benchmark ligand_unbinding_demo --load
+```
